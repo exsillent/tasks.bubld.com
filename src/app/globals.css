@@ -13,13 +13,6 @@
   --font-sans: "AxiformaRegular", sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 @font-face {
   font-family: "AxiformaBold";
   src: url(/fonts/Axiforma-Bold.ttf) format("truetype");
