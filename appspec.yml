@@ -1,0 +1,22 @@
+version: 0.0
+os: linux
+files:
+  - source: /
+    destination: /home/tasksapp/public_html/
+permissions:
+  - object: /home/tasksapp/public_html/
+    owner: tasksapp
+    group: tasksapp
+    type:
+      - directory
+      - file
+hooks:
+  BeforeInstall:
+    - location: /ownership.sh
+      timeout: 600
+  AfterInstall:
+    - location: /permissions.sh
+  ApplicationStart:
+    - location: /build.sh
+      runas: tasksapp
+      timeout: 300

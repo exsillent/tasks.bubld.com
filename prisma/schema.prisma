@@ -1,0 +1,131 @@
+datasource db {
+  provider = "sqlite"
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  CONTRACTOR
+  APPROVER
+}
+
+enum AppArea {
+  CUSTOMER_APP
+  TECHNICIAN_APP
+  BUBLD_COM
+  BUBLR_BUBLD_COM
+  ADMIN_PANEL
+  INFRASTRUCTURE
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TaskType {
+  ERROR
+  FEATURE
+  IDEA
+}
+
+enum Status {
+  OPEN
+  IN_PROGRESS
+  IN_REVIEW
+  STAGING_REVIEW
+  APPROVED
+  DONE
+}
+
+model User {
+  id            String       @id @default(cuid())
+  name          String
+  email         String       @unique
+  passwordHash  String
+  role          Role
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  createdTasks  Task[]       @relation("CreatedBy")
+  assignedTasks Task[]       @relation("AssignedTo")
+  comments      Comment[]
+  attachments   Attachment[]
+  loginAttempts LoginAttempt[]
+}
+
+model Task {
+  id                String       @id @default(cuid())
+  title             String
+  description       String
+  appArea           AppArea
+  dueDate           DateTime?
+  priority          Priority
+  type              TaskType
+  status            Status       @default(OPEN)
+  foundInProduction Boolean      @default(false)
+  isDraft           Boolean      @default(false)
+  reviewNote        String?
+  createdBy         User         @relation("CreatedBy", fields: [createdById], references: [id])
+  createdById       String
+  assignee          User?        @relation("AssignedTo", fields: [assigneeId], references: [id])
+  assigneeId        String?
+  comments          Comment[]
+  attachments       Attachment[]
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  @@index([status])
+  @@index([assigneeId])
+  @@index([createdById])
+}
+
+model Comment {
+  id          String       @id @default(cuid())
+  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId      String
+  author      User         @relation(fields: [authorId], references: [id])
+  authorId    String
+  body        String
+  // ADMIN-only: a private technical note (commit refs, file paths, etc.)
+  // visible to Yasir alone -- everyone else must never see it, enforced
+  // in the query layer (lib/tasks.ts), same pattern as draft tasks.
+  isPrivate   Boolean      @default(false)
+  isSystem    Boolean      @default(false)
+  attachments Attachment[]
+  createdAt   DateTime     @default(now())
+
+  @@index([taskId])
+}
+
+model Attachment {
+  id           String   @id @default(cuid())
+  key          String   // S3 object key, not a public URL -- resolved to a presigned URL on read
+  filename     String
+  task         Task?    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  taskId       String?
+  comment      Comment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  commentId    String?
+  uploadedBy   User     @relation(fields: [uploadedById], references: [id])
+  uploadedById String
+  createdAt    DateTime @default(now())
+
+  @@index([taskId])
+  @@index([commentId])
+}
+
+// Simple sliding-window login rate limiting -- no external service needed.
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  user      User?    @relation(fields: [userId], references: [id])
+  userId    String?
+  email     String
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+}
