@@ -65,6 +65,7 @@ model AppArea {
 
 model Task {
   id                String       @id @default(cuid())
+  number            Int          @unique
   title             String
   description       String
   appArea           AppArea      @relation(fields: [appAreaId], references: [id])

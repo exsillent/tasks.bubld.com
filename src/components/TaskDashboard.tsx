@@ -11,11 +11,12 @@ import {
   TYPE_LABELS,
   TYPE_COLORS,
 } from "@/lib/labels";
-import type { listVisibleTasks, listActiveUsers } from "@/lib/tasks";
-import type { Status } from "@prisma/client";
+import type { listVisibleTasks, listActiveUsers, listAllAppAreas } from "@/lib/tasks";
+import type { Status, Priority, TaskType } from "@prisma/client";
 
 type Task = Awaited<ReturnType<typeof listVisibleTasks>>[number];
 type ActiveUser = Awaited<ReturnType<typeof listActiveUsers>>[number];
+type AppAreaOption = Awaited<ReturnType<typeof listAllAppAreas>>[number];
 
 const DASHBOARD_STATUSES: Status[] = [
   "OPEN",
@@ -24,6 +25,9 @@ const DASHBOARD_STATUSES: Status[] = [
   "STAGING_REVIEW",
   "APPROVED",
 ];
+const ALL_STATUSES = Object.keys(STATUS_LABELS) as Status[];
+const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
+const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
 
 function isOverdue(task: Task): boolean {
   return !!task.dueDate && task.status !== "DONE" && new Date(task.dueDate) < new Date();
@@ -32,15 +36,20 @@ function isOverdue(task: Task): boolean {
 export default function TaskDashboard({
   tasks,
   users,
+  appAreas,
   currentUserId,
 }: {
   tasks: Task[];
   users: ActiveUser[];
+  appAreas: AppAreaOption[];
   currentUserId: string;
 }) {
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<Status | "ALL" | "">("");
+  const [statusFilter, setStatusFilter] = useState<Status | "">("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
+  const [appAreaFilter, setAppAreaFilter] = useState("");
+  const [priorityFilter, setPriorityFilter] = useState<Priority | "">("");
+  const [typeFilter, setTypeFilter] = useState<TaskType | "">("");
   const [showCompleted, setShowCompleted] = useState(false);
   const [showProdOnly, setShowProdOnly] = useState(false);
   const [myTasksOnly, setMyTasksOnly] = useState(false);
@@ -64,18 +73,41 @@ export default function TaskDashboard({
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
+    const qNumber = q.startsWith("#") ? q.slice(1) : q;
     return tasks.filter((t) => {
       if (!showCompleted && t.status === "DONE" && statusFilter !== "DONE") return false;
-      if (statusFilter && statusFilter !== "ALL" && t.status !== statusFilter) return false;
+      if (statusFilter && t.status !== statusFilter) return false;
       if (assigneeFilter && t.assigneeId !== assigneeFilter) return false;
+      if (appAreaFilter && t.appAreaId !== appAreaFilter) return false;
+      if (priorityFilter && t.priority !== priorityFilter) return false;
+      if (typeFilter && t.type !== typeFilter) return false;
       if (showProdOnly && !t.foundInProduction) return false;
       if (myTasksOnly && t.assigneeId !== currentUserId) return false;
-      if (q && !t.title.toLowerCase().includes(q) && !t.description.toLowerCase().includes(q)) {
+      if (
+        q &&
+        String(t.number) !== qNumber &&
+        !t.title.toLowerCase().includes(q) &&
+        !t.description.toLowerCase().includes(q)
+      ) {
         return false;
       }
       return true;
     });
-  }, [tasks, search, statusFilter, assigneeFilter, showCompleted, showProdOnly, myTasksOnly, currentUserId]);
+  }, [
+    tasks,
+    search,
+    statusFilter,
+    assigneeFilter,
+    appAreaFilter,
+    priorityFilter,
+    typeFilter,
+    showCompleted,
+    showProdOnly,
+    myTasksOnly,
+    currentUserId,
+  ]);
+
+  const selectClass = "border border-neutral-300 rounded-lg px-2 py-1.5 text-sm outline-none";
 
   return (
     <div className="flex flex-col gap-5">
@@ -112,20 +144,68 @@ export default function TaskDashboard({
       <div className="flex flex-wrap gap-2 items-center">
         <input
           type="search"
-          placeholder="Search tasks..."
+          placeholder="Search tasks or #number..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           className="border border-neutral-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-brand transition-colors flex-1 min-w-[180px]"
         />
         <select
+          value={statusFilter}
+          onChange={(e) => setStatusFilter(e.target.value as Status | "")}
+          className={selectClass}
+        >
+          <option value="">All statuses</option>
+          {ALL_STATUSES.map((s) => (
+            <option key={s} value={s}>
+              {STATUS_LABELS[s]}
+            </option>
+          ))}
+        </select>
+        <select
           value={assigneeFilter}
           onChange={(e) => setAssigneeFilter(e.target.value)}
-          className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm outline-none"
+          className={selectClass}
         >
           <option value="">All assignees</option>
           {users.map((u) => (
             <option key={u.id} value={u.id}>
               {u.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={appAreaFilter}
+          onChange={(e) => setAppAreaFilter(e.target.value)}
+          className={selectClass}
+        >
+          <option value="">All app areas</option>
+          {appAreas.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={priorityFilter}
+          onChange={(e) => setPriorityFilter(e.target.value as Priority | "")}
+          className={selectClass}
+        >
+          <option value="">All priorities</option>
+          {PRIORITIES.map((p) => (
+            <option key={p} value={p}>
+              {PRIORITY_LABELS[p]}
+            </option>
+          ))}
+        </select>
+        <select
+          value={typeFilter}
+          onChange={(e) => setTypeFilter(e.target.value as TaskType | "")}
+          className={selectClass}
+        >
+          <option value="">All types</option>
+          {TYPES.map((t) => (
+            <option key={t} value={t}>
+              {TYPE_LABELS[t]}
             </option>
           ))}
         </select>
@@ -145,10 +225,37 @@ export default function TaskDashboard({
           />
           Show completed
         </label>
+        {(statusFilter ||
+          assigneeFilter ||
+          appAreaFilter ||
+          priorityFilter ||
+          typeFilter ||
+          showProdOnly ||
+          myTasksOnly ||
+          search) && (
+          <button
+            onClick={() => {
+              setSearch("");
+              setStatusFilter("");
+              setAssigneeFilter("");
+              setAppAreaFilter("");
+              setPriorityFilter("");
+              setTypeFilter("");
+              setShowProdOnly(false);
+              setMyTasksOnly(false);
+            }}
+            className="text-sm text-neutral-400 hover:text-neutral-700"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
 
       {/* Task list */}
       <div className="flex flex-col divide-y divide-neutral-100 border border-neutral-200 rounded-xl overflow-hidden">
+        <p className="px-4 py-2 text-xs text-neutral-400 bg-neutral-50">
+          {filtered.length} task{filtered.length === 1 ? "" : "s"}
+        </p>
         {filtered.length === 0 && (
           <p className="px-4 py-8 text-center text-sm text-neutral-400">No tasks match.</p>
         )}
@@ -158,6 +265,7 @@ export default function TaskDashboard({
             href={`/tasks/${t.id}`}
             className="flex flex-wrap items-center gap-2 px-4 py-3 hover:bg-neutral-50 transition-colors"
           >
+            <span className="text-xs text-neutral-400 min-w-[36px]">#{t.number}</span>
             {t.isDraft && (
               <Badge label="Draft" className="bg-neutral-800 text-white" />
             )}

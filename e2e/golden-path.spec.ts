@@ -74,45 +74,56 @@ test.describe("golden path", () => {
     await page.reload();
     await expect(page.locator("select").filter({ hasText: "Techaliance" })).toHaveValue(/.+/);
 
-    // Techaliance starts and moves it to review.
+    // Techaliance starts and moves it to review, via the status dropdown.
     await page.context().clearCookies();
     await login(page, "tech-e2e@example.com");
     await page.goto(taskUrl);
-    await page.getByRole("button", { name: "Start Work" }).click();
-    await expect(page.getByText("In Progress", { exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "Mark Ready for Review" }).click();
-    await expect(page.getByText("In Review", { exact: true })).toBeVisible();
+    await page.locator("#statusSelect").selectOption("IN_PROGRESS");
+    await page.waitForLoadState("networkidle");
+    await page.reload();
+    await expect(page.locator("#statusSelect")).toHaveValue("IN_PROGRESS");
+    await page.locator("#statusSelect").selectOption("IN_REVIEW");
+    await page.waitForLoadState("networkidle");
+    await page.reload();
+    await expect(page.locator("#statusSelect")).toHaveValue("IN_REVIEW");
 
-    // Techaliance should NOT be able to push it to staging review themselves.
-    await expect(page.getByRole("button", { name: "Send to Staging Review" })).toHaveCount(0);
+    // Techaliance should NOT be able to push it to staging review themselves
+    // -- that option must be disabled in their dropdown (IN_REVIEW's exit is
+    // ADMIN-only).
+    await expect(page.locator("#statusSelect option[value=STAGING_REVIEW]")).toBeDisabled();
 
     // Yasir sends it to staging review.
     await page.context().clearCookies();
     await login(page, "yasir-e2e@example.com");
     await page.goto(taskUrl);
-    await page.getByRole("button", { name: "Send to Staging Review" }).click();
-    await expect(page.getByText("Staging Review", { exact: true })).toBeVisible();
+    await page.locator("#statusSelect").selectOption("STAGING_REVIEW");
+    await page.waitForLoadState("networkidle");
+    await page.reload();
+    await expect(page.locator("#statusSelect")).toHaveValue("STAGING_REVIEW");
 
     // Roland approves.
     await page.context().clearCookies();
     await login(page, "roland-e2e@example.com");
     await page.goto(taskUrl);
     await page.getByRole("button", { name: "Approve" }).click();
-    await expect(page.getByText("Approved", { exact: true })).toBeVisible();
+    await expect(page.locator("#statusSelect")).toHaveValue("APPROVED");
 
-    // Techaliance should not see an Approve button anywhere (not their role).
+    // Techaliance should not see an Approve button, and can't select Done
+    // (not their role).
     await page.context().clearCookies();
     await login(page, "tech-e2e@example.com");
     await page.goto(taskUrl);
     await expect(page.getByRole("button", { name: "Approve" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "Mark Deployed" })).toHaveCount(0);
+    await expect(page.locator("#statusSelect option[value=DONE]")).toBeDisabled();
 
-    // Yasir marks it deployed.
+    // Yasir marks it deployed via the dropdown.
     await page.context().clearCookies();
     await login(page, "yasir-e2e@example.com");
     await page.goto(taskUrl);
-    await page.getByRole("button", { name: "Mark Deployed" }).click();
-    await expect(page.getByText("Done", { exact: true })).toBeVisible();
+    await page.locator("#statusSelect").selectOption("DONE");
+    await page.waitForLoadState("networkidle");
+    await page.reload();
+    await expect(page.locator("#statusSelect")).toHaveValue("DONE");
   });
 
   test("comments: post one, it appears with author and timestamp", async ({ page }) => {
@@ -190,6 +201,34 @@ test.describe("golden path", () => {
     await login(page, "roland-e2e@example.com");
     await page.goto(taskUrl);
     await expect(page.getByRole("heading", { name: "E2E: secret draft task" })).toBeVisible();
+  });
+
+  test("task creator can Close, Reopen, and Delete their own task", async ({ page }) => {
+    await login(page, "yasir-e2e@example.com");
+    await page.getByRole("link", { name: "+ New Task" }).click();
+    await page.getByLabel("Title").fill("E2E: close reopen delete task");
+    await page.getByLabel("Description").fill("Testing the owner shortcuts.");
+    await page.getByRole("button", { name: "Create Task" }).click();
+    await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+    const taskUrl = page.url();
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Close" }).click();
+    await page.waitForLoadState("networkidle");
+    await page.reload();
+    await expect(page.locator("#statusSelect")).toHaveValue("DONE");
+
+    await page.getByRole("button", { name: "Reopen" }).click();
+    await page.waitForLoadState("networkidle");
+    await page.reload();
+    await expect(page.locator("#statusSelect")).toHaveValue("IN_PROGRESS");
+
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Delete" }).click();
+    await page.waitForURL("/");
+    await expect(page.getByText("E2E: close reopen delete task")).toHaveCount(0);
+    await page.goto(taskUrl);
+    await expect(page.getByRole("heading", { name: "404" })).toBeVisible();
   });
 
   test("logout clears the session", async ({ page }) => {

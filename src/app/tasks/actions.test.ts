@@ -12,6 +12,8 @@ import {
   approveTask,
   rejectTask,
   reopenTask,
+  closeTask,
+  deleteTask,
   publishTask,
   addComment,
 } from "./actions";
@@ -390,7 +392,7 @@ describe("task Server Actions", () => {
       await expect(reopenTask(task.id)).rejects.toThrow("Only a done task can be reopened.");
     });
 
-    it("CONTRACTOR cannot reopen", async () => {
+    it("CONTRACTOR cannot reopen a task they neither created nor are assigned to", async () => {
       await loginAs(admin);
       await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
       const task = await prisma.task.findFirstOrThrow();
@@ -398,6 +400,136 @@ describe("task Server Actions", () => {
 
       await loginAs(contractor);
       await expect(reopenTask(task.id)).rejects.toThrow("Not authorized");
+    });
+
+    it("the task's own creator can reopen it, even without a reviewer role", async () => {
+      await loginAs(contractor);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
+
+      await loginAs(contractor);
+      await reopenTask(task.id);
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
+        "IN_PROGRESS",
+      );
+    });
+
+    it("the task's own assignee can reopen it, even without a reviewer role", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await assignTask(task.id, contractor.id);
+      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
+
+      await loginAs(contractor);
+      await reopenTask(task.id);
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
+        "IN_PROGRESS",
+      );
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("closeTask", () => {
+    it("the creator can close their own task from any status", async () => {
+      await loginAs(contractor);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow(); // status OPEN
+
+      await loginAs(contractor);
+      await closeTask(task.id);
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
+        "DONE",
+      );
+
+      const comments = await prisma.comment.findMany({ where: { taskId: task.id } });
+      expect(comments.some((c) => c.isSystem && c.body.includes("Closed by"))).toBe(true);
+    });
+
+    it("the assignee can close a task even if they didn't create it", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await assignTask(task.id, contractor.id);
+
+      await loginAs(contractor);
+      await closeTask(task.id);
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
+        "DONE",
+      );
+    });
+
+    it("someone who is neither creator, assignee, nor reviewer cannot close a task", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await loginAs(contractor);
+      await expect(closeTask(task.id)).rejects.toThrow("Not authorized");
+    });
+
+    it("cannot close a task that's already Done", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
+
+      await loginAs(admin);
+      await expect(closeTask(task.id)).rejects.toThrow("Task is already closed.");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("deleteTask", () => {
+    it("the creator can delete their own task", async () => {
+      await loginAs(contractor);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await loginAs(contractor);
+      await deleteTask(task.id);
+      expect(await prisma.task.findUnique({ where: { id: task.id } })).toBeNull();
+    });
+
+    it("deleting a task also removes its comments", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      const fd = new FormData();
+      fd.set("body", "a comment");
+      await addComment(task.id, fd);
+
+      await loginAs(admin);
+      await deleteTask(task.id);
+      expect(await prisma.comment.findMany({ where: { taskId: task.id } })).toHaveLength(0);
+    });
+
+    it("someone who is neither creator, assignee, nor reviewer cannot delete a task", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await loginAs(contractor);
+      await expect(deleteTask(task.id)).rejects.toThrow("Not authorized");
+      expect(await prisma.task.findUnique({ where: { id: task.id } })).not.toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("task numbering", () => {
+    it("assigns sequential numbers in creation order", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "First" })).catch(() => {});
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Second" })).catch(() => {});
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Third" })).catch(() => {});
+
+      const tasks = await prisma.task.findMany({ orderBy: { number: "asc" } });
+      expect(tasks.map((t) => [t.title, t.number])).toEqual([
+        ["First", 1],
+        ["Second", 2],
+        ["Third", 3],
+      ]);
     });
   });
 

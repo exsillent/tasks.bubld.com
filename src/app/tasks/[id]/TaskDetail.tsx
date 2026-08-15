@@ -19,6 +19,8 @@ import {
   approveTask,
   rejectTask,
   reopenTask,
+  closeTask,
+  deleteTask,
   publishTask,
   addComment,
 } from "@/app/tasks/actions";
@@ -32,6 +34,7 @@ type AppAreaOption = Awaited<ReturnType<typeof listAllAppAreas>>[number];
 
 const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
 const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
+const STATUSES = Object.keys(STATUS_LABELS) as Status[];
 
 function formatDate(d: Date | string | null): string {
   if (!d) return "";
@@ -66,6 +69,28 @@ export default function TaskDetail({
   const isApproverOrAdmin = session.role === "APPROVER" || session.role === "ADMIN";
   const isAdmin = session.role === "ADMIN";
   const isCreator = task.createdById === session.sub;
+  const isAssignee = task.assigneeId === session.sub;
+  // Reopen/Close/Delete: available to the task's own creator or assignee,
+  // as well as APPROVER/ADMIN (who already have review authority over
+  // every task regardless of ownership).
+  const isOwnerOrReviewer = isApproverOrAdmin || isCreator || isAssignee;
+
+  // Which statuses the plain dropdown may jump to from here, mirroring the
+  // server-side FORWARD_TRANSITIONS + role checks in actions.ts exactly --
+  // STAGING_REVIEW's own exits (approve/reject) stay their own dedicated
+  // flow below since they carry a note; DONE is only reachable here via
+  // Close (its own button, not a plain transition).
+  const enabledNextStatuses = new Set<Status>(
+    task.status === "OPEN" && isAssigneeOrAdmin
+      ? ["IN_PROGRESS"]
+      : task.status === "IN_PROGRESS" && isAssigneeOrAdmin
+        ? ["IN_REVIEW"]
+        : task.status === "IN_REVIEW" && isAdmin
+          ? ["STAGING_REVIEW", "IN_PROGRESS"]
+          : task.status === "APPROVED" && isAdmin
+            ? ["DONE"]
+            : [],
+  );
 
   function run(fn: () => Promise<void>) {
     setError(null);
@@ -75,6 +100,29 @@ export default function TaskDetail({
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Something went wrong.");
+      }
+    });
+  }
+
+  function handleStatusSelect(next: Status) {
+    if (next === task.status || !enabledNextStatuses.has(next)) return;
+    run(() => updateTaskStatus(task.id, next));
+  }
+
+  function handleClose() {
+    if (!window.confirm("Close this task and mark it Done? This skips any remaining review steps.")) return;
+    run(() => closeTask(task.id));
+  }
+
+  function handleDelete() {
+    if (!window.confirm("Delete this task permanently? This cannot be undone.")) return;
+    setError(null);
+    startTransition(async () => {
+      try {
+        await deleteTask(task.id);
+        router.push("/");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Delete failed.");
       }
     });
   }
@@ -178,7 +226,9 @@ export default function TaskDetail({
       ) : (
         <div className="flex flex-col gap-3">
           <div className="flex items-start justify-between gap-3">
-            <h1 className="axiBold text-xl text-neutral-900">{task.title}</h1>
+            <h1 className="axiBold text-xl text-neutral-900">
+              <span className="text-neutral-400 font-normal">#{task.number}</span> {task.title}
+            </h1>
             {canEditFields && (
               <button onClick={() => setEditing(true)} className="text-sm text-neutral-400 hover:text-neutral-700 shrink-0">
                 Edit
@@ -242,27 +292,48 @@ export default function TaskDetail({
       )}
 
       {/* Status transitions */}
-      <div className="flex flex-wrap gap-2 border-t border-neutral-100 pt-4">
-        {task.status === "OPEN" && isAssigneeOrAdmin && (
-          <button disabled={isPending} onClick={() => run(() => updateTaskStatus(task.id, "IN_PROGRESS" as Status))} className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5 hover:border-brand transition-colors">
-            Start Work
+      <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-4">
+        <label className="text-sm text-neutral-500" htmlFor="statusSelect">
+          Status:
+        </label>
+        <select
+          id="statusSelect"
+          value={task.status}
+          disabled={isPending}
+          onChange={(e) => handleStatusSelect(e.target.value as Status)}
+          className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm"
+        >
+          {STATUSES.map((s) => (
+            <option key={s} value={s} disabled={s !== task.status && !enabledNextStatuses.has(s)}>
+              {STATUS_LABELS[s]}
+            </option>
+          ))}
+        </select>
+
+        {isOwnerOrReviewer && task.status !== "DONE" && (
+          <button
+            disabled={isPending}
+            onClick={handleClose}
+            className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5 hover:border-brand transition-colors"
+          >
+            Close
           </button>
         )}
-        {task.status === "IN_PROGRESS" && isAssigneeOrAdmin && (
-          <button disabled={isPending} onClick={() => run(() => updateTaskStatus(task.id, "IN_REVIEW" as Status))} className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5 hover:border-brand transition-colors">
-            Mark Ready for Review
+        {isOwnerOrReviewer && task.status === "DONE" && (
+          <button disabled={isPending} onClick={() => run(() => reopenTask(task.id))} className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5">
+            Reopen
           </button>
         )}
-        {task.status === "IN_REVIEW" && isAdmin && (
-          <>
-            <button disabled={isPending} onClick={() => run(() => updateTaskStatus(task.id, "STAGING_REVIEW" as Status))} className="axiMed text-sm bg-brand text-white rounded-lg px-3 py-1.5">
-              Send to Staging Review
-            </button>
-            <button disabled={isPending} onClick={() => run(() => updateTaskStatus(task.id, "IN_PROGRESS" as Status))} className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5">
-              Send Back
-            </button>
-          </>
+        {isOwnerOrReviewer && (
+          <button
+            disabled={isPending}
+            onClick={handleDelete}
+            className="axiMed text-sm text-red-600 hover:text-red-700 ml-auto"
+          >
+            Delete
+          </button>
         )}
+
         {task.status === "STAGING_REVIEW" && isApproverOrAdmin && !showRejectBox && (
           <>
             <input
@@ -302,16 +373,6 @@ export default function TaskDetail({
               </button>
             </div>
           </div>
-        )}
-        {task.status === "APPROVED" && isAdmin && (
-          <button disabled={isPending} onClick={() => run(() => updateTaskStatus(task.id, "DONE" as Status))} className="axiMed text-sm bg-emerald-600 text-white rounded-lg px-3 py-1.5">
-            Mark Deployed
-          </button>
-        )}
-        {task.status === "DONE" && isApproverOrAdmin && (
-          <button disabled={isPending} onClick={() => run(() => reopenTask(task.id))} className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5">
-            Reopen
-          </button>
         )}
         {task.reviewNote && (
           <p className="text-xs text-neutral-500 w-full">Last review note: {task.reviewNote}</p>

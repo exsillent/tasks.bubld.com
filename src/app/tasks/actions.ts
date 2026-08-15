@@ -104,26 +104,30 @@ export async function createTask(
     }
   }
 
-  const task = await prisma.task.create({
-    data: {
-      title,
-      description,
-      appAreaId,
-      priority,
-      type,
-      dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
-      assigneeId,
-      foundInProduction,
-      isDraft,
-      createdById: session.sub,
-      attachments: {
-        create: pendingAttachments.map((a) => ({
-          key: a.key,
-          filename: a.filename,
-          uploadedById: session.sub,
-        })),
+  const task = await prisma.$transaction(async (tx) => {
+    const last = await tx.task.findFirst({ orderBy: { number: "desc" }, select: { number: true } });
+    return tx.task.create({
+      data: {
+        number: (last?.number ?? 0) + 1,
+        title,
+        description,
+        appAreaId,
+        priority,
+        type,
+        dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
+        assigneeId,
+        foundInProduction,
+        isDraft,
+        createdById: session.sub,
+        attachments: {
+          create: pendingAttachments.map((a) => ({
+            key: a.key,
+            filename: a.filename,
+            uploadedById: session.sub,
+          })),
+        },
       },
-    },
+    });
   });
 
   if (assigneeId && assigneeId !== session.sub && !isDraft) {
@@ -341,13 +345,25 @@ export async function rejectTask(taskId: string, note: string): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Reopen -- APPROVER or ADMIN only, from DONE
+// Reopen -- APPROVER/ADMIN, or the task's own creator/assignee, from DONE
 // ---------------------------------------------------------------------------
 
+function requireOwnerOrReviewer(
+  session: { role: string; sub: string },
+  task: { createdById: string; assigneeId: string | null },
+): void {
+  const isReviewer = session.role === "ADMIN" || session.role === "APPROVER";
+  const isOwner = task.createdById === session.sub || task.assigneeId === session.sub;
+  if (!isReviewer && !isOwner) {
+    throw new Error("Not authorized.");
+  }
+}
+
 export async function reopenTask(taskId: string): Promise<void> {
-  const session = await requireRole("APPROVER", "ADMIN");
+  const session = await requireSession();
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
+  requireOwnerOrReviewer(session, task);
   if (task.status !== "DONE") {
     throw new Error("Only a done task can be reopened.");
   }
@@ -372,6 +388,59 @@ export async function reopenTask(taskId: string): Promise<void> {
   );
 
   revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/");
+}
+
+// ---------------------------------------------------------------------------
+// Close -- creator/assignee/ADMIN/APPROVER, from any status, straight to DONE
+// ---------------------------------------------------------------------------
+
+export async function closeTask(taskId: string): Promise<void> {
+  const session = await requireSession();
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  requireOwnerOrReviewer(session, task);
+  if (task.status === "DONE") {
+    throw new Error("Task is already closed.");
+  }
+
+  await prisma.$transaction([
+    prisma.task.update({ where: { id: taskId }, data: { status: "DONE" } }),
+    prisma.comment.create({
+      data: {
+        taskId,
+        authorId: session.sub,
+        isSystem: true,
+        body: `Closed by ${session.name}.`,
+      },
+    }),
+  ]);
+
+  await notifyTaskEvent(
+    taskId,
+    session.sub,
+    `Task closed: ${task.title}`,
+    `${session.name} closed "${task.title}".`,
+  );
+
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/");
+}
+
+// ---------------------------------------------------------------------------
+// Delete -- creator/assignee/ADMIN only. Permanent -- cascades comments and
+// attachments (DB-level onDelete: Cascade), does not touch the underlying
+// S3 objects.
+// ---------------------------------------------------------------------------
+
+export async function deleteTask(taskId: string): Promise<void> {
+  const session = await requireSession();
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  requireOwnerOrReviewer(session, task);
+
+  await prisma.task.delete({ where: { id: taskId } });
+
   revalidatePath("/");
 }
 
