@@ -7,7 +7,6 @@ import AttachmentUploader from "@/components/AttachmentUploader";
 import {
   STATUS_LABELS,
   STATUS_COLORS,
-  APP_AREA_LABELS,
   PRIORITY_LABELS,
   PRIORITY_COLORS,
   TYPE_LABELS,
@@ -23,14 +22,14 @@ import {
   publishTask,
   addComment,
 } from "@/app/tasks/actions";
-import type { getVisibleTask, listActiveUsers } from "@/lib/tasks";
+import type { getVisibleTask, listActiveUsers, listAllAppAreas } from "@/lib/tasks";
 import type { SessionPayload } from "@/lib/jwt";
-import type { AppArea, Priority, TaskType, Status } from "@prisma/client";
+import type { Priority, TaskType, Status } from "@prisma/client";
 
 type Task = NonNullable<Awaited<ReturnType<typeof getVisibleTask>>>;
 type ActiveUser = Awaited<ReturnType<typeof listActiveUsers>>[number];
+type AppAreaOption = Awaited<ReturnType<typeof listAllAppAreas>>[number];
 
-const APP_AREAS = Object.keys(APP_AREA_LABELS) as AppArea[];
 const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
 const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
 
@@ -46,10 +45,12 @@ function isOverdue(task: Task): boolean {
 export default function TaskDetail({
   task,
   users,
+  appAreas,
   session,
 }: {
   task: Task;
   users: ActiveUser[];
+  appAreas: AppAreaOption[];
   session: SessionPayload;
 }) {
   const router = useRouter();
@@ -143,9 +144,9 @@ export default function TaskDetail({
             className="border border-neutral-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand"
           />
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <select name="appArea" defaultValue={task.appArea} className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
-              {APP_AREAS.map((a) => (
-                <option key={a} value={a}>{APP_AREA_LABELS[a]}</option>
+            <select name="appAreaId" defaultValue={task.appAreaId} className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+              {appAreas.map((a) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
             <select name="type" defaultValue={task.type} className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
@@ -186,7 +187,7 @@ export default function TaskDetail({
           </div>
           <p className="text-sm text-neutral-600 whitespace-pre-wrap">{task.description}</p>
           <div className="flex flex-wrap gap-2">
-            <Badge label={APP_AREA_LABELS[task.appArea]} className="bg-neutral-100 text-neutral-600" />
+            <Badge label={task.appArea.name} className="bg-neutral-100 text-neutral-600" />
             <Badge label={TYPE_LABELS[task.type]} className={TYPE_COLORS[task.type]} />
             <Badge label={PRIORITY_LABELS[task.priority]} className={PRIORITY_COLORS[task.priority]} />
             <Badge label={STATUS_LABELS[task.status]} className={STATUS_COLORS[task.status]} />

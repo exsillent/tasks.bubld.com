@@ -30,7 +30,7 @@ function taskForm(fields: Record<string, string>): FormData {
 const BASE_TASK_FIELDS = {
   title: "Fix the thing",
   description: "It's broken.",
-  appArea: "CUSTOMER_APP",
+  appAreaId: "customer_app",
   priority: "MEDIUM",
   type: "ERROR",
 };

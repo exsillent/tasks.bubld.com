@@ -3,10 +3,9 @@
 import { useActionState } from "react";
 import { createTask, type CreateTaskState } from "@/app/tasks/actions";
 import AttachmentUploader from "@/components/AttachmentUploader";
-import { APP_AREA_LABELS, PRIORITY_LABELS, TYPE_LABELS } from "@/lib/labels";
-import type { AppArea, Priority, TaskType } from "@prisma/client";
+import { PRIORITY_LABELS, TYPE_LABELS } from "@/lib/labels";
+import type { Priority, TaskType } from "@prisma/client";
 
-const APP_AREAS = Object.keys(APP_AREA_LABELS) as AppArea[];
 const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
 const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
 
@@ -16,9 +15,11 @@ const labelClass = "text-sm axiMed text-neutral-700";
 
 export default function NewTaskForm({
   users,
+  appAreas,
   isAdmin,
 }: {
   users: { id: string; name: string }[];
+  appAreas: { id: string; name: string }[];
   isAdmin: boolean;
 }) {
   const [state, formAction, pending] = useActionState<CreateTaskState, FormData>(
@@ -50,13 +51,13 @@ export default function NewTaskForm({
 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="flex flex-col gap-1">
-          <label htmlFor="appArea" className={labelClass}>
+          <label htmlFor="appAreaId" className={labelClass}>
             App area
           </label>
-          <select id="appArea" name="appArea" required className={inputClass}>
-            {APP_AREAS.map((a) => (
-              <option key={a} value={a}>
-                {APP_AREA_LABELS[a]}
+          <select id="appAreaId" name="appAreaId" required className={inputClass}>
+            {appAreas.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
               </option>
             ))}
           </select>
@@ -107,10 +108,19 @@ export default function NewTaskForm({
         </select>
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-neutral-600">
-        <input type="checkbox" name="foundInProduction" />
-        Found in production (not caught on staging)
-      </label>
+      <div className="flex flex-col gap-1">
+        <span className={labelClass}>Where was this found?</span>
+        <div className="flex gap-4 text-sm text-neutral-600">
+          <label className="flex items-center gap-2">
+            <input type="radio" name="foundWhere" value="staging" defaultChecked />
+            Staging
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="radio" name="foundWhere" value="production" />
+            Production
+          </label>
+        </div>
+      </div>
 
       {isAdmin && (
         <label className="flex items-center gap-2 text-sm text-neutral-600">

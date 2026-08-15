@@ -6,7 +6,6 @@ import Badge from "./Badge";
 import {
   STATUS_LABELS,
   STATUS_COLORS,
-  APP_AREA_LABELS,
   PRIORITY_LABELS,
   PRIORITY_COLORS,
   TYPE_LABELS,
@@ -165,7 +164,7 @@ export default function TaskDashboard({
             <span className="axiMed text-sm text-neutral-900 flex-1 min-w-[160px]">
               {t.title}
             </span>
-            <Badge label={APP_AREA_LABELS[t.appArea]} className="bg-neutral-100 text-neutral-600" />
+            <Badge label={t.appArea.name} className="bg-neutral-100 text-neutral-600" />
             <Badge label={TYPE_LABELS[t.type]} className={TYPE_COLORS[t.type]} />
             <Badge label={PRIORITY_LABELS[t.priority]} className={PRIORITY_COLORS[t.priority]} />
             <Badge label={STATUS_LABELS[t.status]} className={STATUS_COLORS[t.status]} />

@@ -11,6 +11,14 @@ export default function AppHeader({ session }: { session: SessionPayload }) {
         <span className="axiBold text-sm text-neutral-500 hidden sm:inline">Tasks</span>
       </Link>
       <div className="flex items-center gap-4">
+        {session.role === "ADMIN" && (
+          <Link
+            href="/admin"
+            className="text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+          >
+            Settings
+          </Link>
+        )}
         <Link
           href="/tasks/new"
           className="axiMed text-sm bg-brand text-white rounded-lg px-3.5 py-1.5 hover:opacity-90 transition-opacity"

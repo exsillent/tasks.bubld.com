@@ -12,15 +12,6 @@ enum Role {
   APPROVER
 }
 
-enum AppArea {
-  CUSTOMER_APP
-  TECHNICIAN_APP
-  BUBLD_COM
-  BUBLR_BUBLD_COM
-  ADMIN_PANEL
-  INFRASTRUCTURE
-}
-
 enum Priority {
   LOW
   MEDIUM
@@ -44,25 +35,40 @@ enum Status {
 }
 
 model User {
-  id            String       @id @default(cuid())
-  name          String
-  email         String       @unique
-  passwordHash  String
-  role          Role
-  isActive      Boolean      @default(true)
-  createdAt     DateTime     @default(now())
-  createdTasks  Task[]       @relation("CreatedBy")
-  assignedTasks Task[]       @relation("AssignedTo")
-  comments      Comment[]
-  attachments   Attachment[]
-  loginAttempts LoginAttempt[]
+  id                        String       @id @default(cuid())
+  name                      String
+  email                     String       @unique
+  passwordHash              String
+  role                      Role
+  isActive                  Boolean      @default(true)
+  emailNotificationsEnabled Boolean      @default(true)
+  createdAt                 DateTime     @default(now())
+  createdTasks              Task[]       @relation("CreatedBy")
+  assignedTasks             Task[]       @relation("AssignedTo")
+  comments                  Comment[]
+  attachments               Attachment[]
+  loginAttempts             LoginAttempt[]
+}
+
+// Admin-managed list (was a fixed enum) so Yasir can add/retire app areas
+// without a code change. Removal is a soft-disable (isActive: false) --
+// it disappears from the "new task" picker but tasks that already
+// reference it keep displaying it normally, matching the same
+// disable-don't-delete pattern already used for User.
+model AppArea {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  tasks     Task[]
 }
 
 model Task {
   id                String       @id @default(cuid())
   title             String
   description       String
-  appArea           AppArea
+  appArea           AppArea      @relation(fields: [appAreaId], references: [id])
+  appAreaId         String
   dueDate           DateTime?
   priority          Priority
   type              TaskType
@@ -82,6 +88,7 @@ model Task {
   @@index([status])
   @@index([assigneeId])
   @@index([createdById])
+  @@index([appAreaId])
 }
 
 model Comment {

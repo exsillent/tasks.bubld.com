@@ -7,7 +7,7 @@ import { requireSession, requireRole } from "@/lib/auth";
 import { getVisibleTask } from "@/lib/tasks";
 import { notifyByEmail } from "@/lib/notify";
 import { createUploadUrl, verifyUploadedObject } from "@/lib/storage";
-import type { AppArea, Priority, TaskType, Status } from "@prisma/client";
+import type { Priority, TaskType, Status } from "@prisma/client";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -49,7 +49,10 @@ async function notifyTaskEvent(
   if (!task) return;
 
   const recipients = [task.createdBy, task.assignee]
-    .filter((u): u is NonNullable<typeof u> => u !== null && u.id !== excludeUserId)
+    .filter(
+      (u): u is NonNullable<typeof u> =>
+        u !== null && u.id !== excludeUserId && u.emailNotificationsEnabled,
+    )
     .map((u) => u.email);
 
   await notifyByEmail(
@@ -73,18 +76,23 @@ export async function createTask(
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const appArea = String(formData.get("appArea") ?? "") as AppArea;
+  const appAreaId = String(formData.get("appAreaId") ?? "");
   const priority = String(formData.get("priority") ?? "") as Priority;
   const type = String(formData.get("type") ?? "") as TaskType;
   const dueDateRaw = String(formData.get("dueDate") ?? "");
   const assigneeId = String(formData.get("assigneeId") ?? "") || null;
-  const foundInProduction = formData.get("foundInProduction") === "on";
+  const foundInProduction = formData.get("foundWhere") === "production";
   // Only ADMIN's checkbox input is ever rendered in the UI, but a mutating
   // action can't trust that -- re-check the role server-side too.
   const isDraft = formData.get("isDraft") === "on" && session.role === "ADMIN";
 
-  if (!title || !description || !appArea || !priority || !type) {
+  if (!title || !description || !appAreaId || !priority || !type) {
     return { error: "Title, description, app area, priority, and type are all required." };
+  }
+
+  const appArea = await prisma.appArea.findUnique({ where: { id: appAreaId } });
+  if (!appArea) {
+    return { error: "Invalid app area." };
   }
 
   const pendingAttachments = parseAttachments(formData);
@@ -100,7 +108,7 @@ export async function createTask(
     data: {
       title,
       description,
-      appArea,
+      appAreaId,
       priority,
       type,
       dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
@@ -120,7 +128,7 @@ export async function createTask(
 
   if (assigneeId && assigneeId !== session.sub && !isDraft) {
     const assignee = await prisma.user.findUnique({ where: { id: assigneeId } });
-    if (assignee) {
+    if (assignee && assignee.emailNotificationsEnabled) {
       await notifyByEmail(
         [assignee.email],
         `New task assigned: ${title}`,
@@ -152,21 +160,24 @@ export async function updateTaskFields(taskId: string, formData: FormData): Prom
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const appArea = String(formData.get("appArea") ?? "") as AppArea;
+  const appAreaId = String(formData.get("appAreaId") ?? "");
   const priority = String(formData.get("priority") ?? "") as Priority;
   const type = String(formData.get("type") ?? "") as TaskType;
   const dueDateRaw = String(formData.get("dueDate") ?? "");
 
-  if (!title || !description) {
-    throw new Error("Title and description are required.");
+  if (!title || !description || !appAreaId) {
+    throw new Error("Title, description, and app area are required.");
   }
+
+  const appArea = await prisma.appArea.findUnique({ where: { id: appAreaId } });
+  if (!appArea) throw new Error("Invalid app area.");
 
   await prisma.task.update({
     where: { id: task.id },
     data: {
       title,
       description,
-      appArea,
+      appAreaId,
       priority,
       type,
       dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
@@ -190,7 +201,7 @@ export async function assignTask(taskId: string, assigneeId: string | null): Pro
 
   if (assigneeId && !task.isDraft) {
     const assignee = await prisma.user.findUnique({ where: { id: assigneeId } });
-    if (assignee) {
+    if (assignee && assignee.emailNotificationsEnabled) {
       await notifyByEmail(
         [assignee.email],
         `Task assigned to you: ${task.title}`,

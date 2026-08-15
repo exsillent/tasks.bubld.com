@@ -42,7 +42,7 @@ test.describe("golden path", () => {
 
     await page.getByLabel("Title").fill("E2E: fix the checkout button");
     await page.getByLabel("Description").fill("It doesn't respond to taps on iOS.");
-    await page.locator("select[name=appArea]").selectOption("CUSTOMER_APP");
+    await page.locator("select[name=appAreaId]").selectOption("customer_app");
     await page.locator("select[name=type]").selectOption("ERROR");
     await page.locator("select[name=priority]").selectOption("HIGH");
     await page.getByRole("button", { name: "Create Task" }).click();

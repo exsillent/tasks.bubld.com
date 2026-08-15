@@ -1,4 +1,4 @@
-import type { AppArea, Priority, TaskType, Status } from "@prisma/client";
+import type { Priority, TaskType, Status } from "@prisma/client";
 
 export const STATUS_LABELS: Record<Status, string> = {
   OPEN: "Open",
@@ -7,15 +7,6 @@ export const STATUS_LABELS: Record<Status, string> = {
   STAGING_REVIEW: "Staging Review",
   APPROVED: "Approved",
   DONE: "Done",
-};
-
-export const APP_AREA_LABELS: Record<AppArea, string> = {
-  CUSTOMER_APP: "Customer App",
-  TECHNICIAN_APP: "Technician App",
-  BUBLD_COM: "bubld.com",
-  BUBLR_BUBLD_COM: "bublr.bubld.com",
-  ADMIN_PANEL: "Admin Panel",
-  INFRASTRUCTURE: "Infrastructure",
 };
 
 export const PRIORITY_LABELS: Record<Priority, string> = {

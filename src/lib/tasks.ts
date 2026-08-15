@@ -18,6 +18,7 @@ export function visibleToUserWhere(userId: string) {
 const TASK_INCLUDE = {
   createdBy: { select: { id: true, name: true, email: true, role: true } },
   assignee: { select: { id: true, name: true, email: true, role: true } },
+  appArea: true,
 } as const;
 
 export async function listVisibleTasks(session: SessionPayload) {
@@ -61,4 +62,36 @@ export async function listActiveUsers() {
     select: { id: true, name: true, email: true, role: true },
     orderBy: { name: "asc" },
   });
+}
+
+/** ADMIN-only user management screen: every account, active or not. */
+export async function listAllUsers() {
+  return prisma.user.findMany({
+    select: {
+      id: true,
+      name: true,
+      email: true,
+      role: true,
+      isActive: true,
+      emailNotificationsEnabled: true,
+    },
+    orderBy: { name: "asc" },
+  });
+}
+
+/** For the "new task" picker -- only app areas currently offered. */
+export async function listActiveAppAreas() {
+  return prisma.appArea.findMany({
+    where: { isActive: true },
+    orderBy: { name: "asc" },
+  });
+}
+
+/**
+ * For the dashboard filter and admin screen -- every app area, including
+ * disabled ones, so historical tasks that reference a retired app area
+ * can still be filtered/found.
+ */
+export async function listAllAppAreas() {
+  return prisma.appArea.findMany({ orderBy: { name: "asc" } });
 }

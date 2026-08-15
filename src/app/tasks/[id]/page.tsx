@@ -1,6 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { getVisibleTask, listActiveUsers } from "@/lib/tasks";
+import { getVisibleTask, listActiveUsers, listAllAppAreas } from "@/lib/tasks";
 import AppHeader from "@/components/AppHeader";
 import TaskDetail from "./TaskDetail";
 
@@ -13,9 +13,10 @@ export default async function TaskDetailPage({
   if (!session) redirect("/login");
 
   const { id } = await params;
-  const [task, users] = await Promise.all([
+  const [task, users, appAreas] = await Promise.all([
     getVisibleTask(id, session),
     listActiveUsers(),
+    listAllAppAreas(),
   ]);
 
   if (!task) notFound();
@@ -24,7 +25,7 @@ export default async function TaskDetailPage({
     <>
       <AppHeader session={session} />
       <main className="flex-1 px-4 sm:px-6 py-6 max-w-3xl w-full mx-auto">
-        <TaskDetail task={task} users={users} session={session} />
+        <TaskDetail task={task} users={users} appAreas={appAreas} session={session} />
       </main>
     </>
   );
