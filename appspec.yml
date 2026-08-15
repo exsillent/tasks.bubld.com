@@ -19,4 +19,4 @@ hooks:
   ApplicationStart:
     - location: /build.sh
       runas: tasksapp
-      timeout: 300
+      timeout: 600

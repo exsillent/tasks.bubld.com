@@ -46,6 +46,16 @@ npx prisma generate
 npx prisma migrate deploy
 
 # ----------------------------
+# Build here, not on the CI/dev machine that produced the zip. Next.js's
+# build-time file tracing snapshots the *currently installed* native
+# node_modules binaries (better-sqlite3, the Prisma query engine) into
+# .next/ -- building anywhere other than the exact deploy target embeds a
+# binary for the wrong OS/arch, which then fails at runtime with
+# "invalid ELF header" the moment a route touches the database.
+# ----------------------------
+npm run build
+
+# ----------------------------
 # Start PM2 process (scoped to this app's own name -- the tasksapp user
 # runs nothing else, but naming it explicitly keeps intent clear and
 # avoids ever accidentally affecting another app's PM2 daemon).
