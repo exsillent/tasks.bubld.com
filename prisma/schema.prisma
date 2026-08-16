@@ -83,6 +83,12 @@ model Task {
   // notes first. Concrete evidence backing a Staging Review/Complete
   // status, not just a claim.
   commits           String?
+  // Hours Shahzad/Techaliance quoted for the work, and who signed off on
+  // that budget (Yasir or Roland) -- free text name, not a User relation,
+  // since it's recording a budget decision, not assigning the task.
+  // Visible to everyone; only ADMIN/APPROVER can set it (see updateTaskQuote).
+  quotedHours       Float?
+  approvedBy        String?
   createdBy         User         @relation("CreatedBy", fields: [createdById], references: [id])
   createdById       String
   assignee          User?        @relation("AssignedTo", fields: [assigneeId], references: [id])

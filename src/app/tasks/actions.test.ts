@@ -7,6 +7,7 @@ import { __clearTestCookies } from "../../../vitest.setup";
 import {
   createTask,
   updateTaskFields,
+  updateTaskQuote,
   assignTask,
   updateTaskStatus,
   approveTask,
@@ -615,6 +616,76 @@ describe("task Server Actions", () => {
       const updated = await prisma.task.findUniqueOrThrow({ where: { id: ownTask.id } });
       expect(updated.title).toBe("Edited by approver");
       expect(updated.commits).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("updateTaskQuote (budget: hours quoted, who approved it)", () => {
+    it("ADMIN can set quoted hours and approver name", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      const fd = new FormData();
+      fd.set("quotedHours", "2.5");
+      fd.set("approvedBy", "Yasir");
+      await updateTaskQuote(task.id, fd);
+
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(updated.quotedHours).toBe(2.5);
+      expect(updated.approvedBy).toBe("Yasir");
+    });
+
+    it("APPROVER (Roland/Danielle) can also set it", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await loginAs(approver);
+      const fd = new FormData();
+      fd.set("quotedHours", "4");
+      fd.set("approvedBy", "Roland");
+      await updateTaskQuote(task.id, fd);
+
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(updated.quotedHours).toBe(4);
+      expect(updated.approvedBy).toBe("Roland");
+    });
+
+    it("CONTRACTOR cannot set it, even on their own task", async () => {
+      await loginAs(contractor);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      const fd = new FormData();
+      fd.set("quotedHours", "10");
+      fd.set("approvedBy", "Techaliance");
+      await expect(updateTaskQuote(task.id, fd)).rejects.toThrow();
+
+      const unchanged = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(unchanged.quotedHours).toBeNull();
+      expect(unchanged.approvedBy).toBeNull();
+    });
+
+    it("rejects a negative or non-numeric hours value", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      const fd = new FormData();
+      fd.set("quotedHours", "-3");
+      await expect(updateTaskQuote(task.id, fd)).rejects.toThrow("positive number");
+    });
+
+    it("CONTRACTOR submitting quotedHours via createTask is silently ignored", async () => {
+      await loginAs(contractor);
+      await createTask(
+        null,
+        taskForm({ ...BASE_TASK_FIELDS, quotedHours: "8", approvedBy: "Techaliance" }),
+      ).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      expect(task.quotedHours).toBeNull();
+      expect(task.approvedBy).toBeNull();
     });
   });
 

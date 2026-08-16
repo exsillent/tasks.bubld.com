@@ -14,6 +14,7 @@ import {
 } from "@/lib/labels";
 import {
   updateTaskFields,
+  updateTaskQuote,
   assignTask,
   updateTaskStatus,
   approveTask,
@@ -135,6 +136,18 @@ export default function TaskDetail({
       try {
         await updateTaskFields(task.id, formData);
         setEditing(false);
+        router.refresh();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Save failed.");
+      }
+    });
+  }
+
+  async function handleQuoteSave(formData: FormData) {
+    setError(null);
+    startTransition(async () => {
+      try {
+        await updateTaskQuote(task.id, formData);
         router.refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Save failed.");
@@ -298,6 +311,42 @@ export default function TaskDetail({
         <span className="text-neutral-300">·</span>
         <span className="text-neutral-500">Created by {task.createdBy.name}</span>
       </div>
+
+      {/* Budget quote -- hours Techaliance quoted, who approved the budget */}
+      {(task.quotedHours != null || task.approvedBy || isApproverOrAdmin) && (
+        <div className="flex items-center gap-2 text-sm flex-wrap">
+          <span className="text-neutral-500">Quoted:</span>
+          {isApproverOrAdmin ? (
+            <form action={handleQuoteSave} className="flex items-center gap-2 flex-wrap">
+              <input
+                type="number"
+                step="0.25"
+                min="0"
+                name="quotedHours"
+                defaultValue={task.quotedHours ?? ""}
+                placeholder="hrs"
+                className="w-20 border border-neutral-300 rounded-lg px-2 py-1 text-sm"
+              />
+              <span className="text-neutral-400">hrs · budget approved by</span>
+              <input
+                type="text"
+                name="approvedBy"
+                defaultValue={task.approvedBy ?? ""}
+                placeholder="name"
+                className="w-28 border border-neutral-300 rounded-lg px-2 py-1 text-sm"
+              />
+              <button type="submit" disabled={isPending} className="text-xs axiMed text-brand">
+                Save
+              </button>
+            </form>
+          ) : (
+            <span className="axiMed">
+              {task.quotedHours != null ? `${task.quotedHours} hrs` : "—"}
+              {task.approvedBy ? ` · budget approved by ${task.approvedBy}` : ""}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Photo gallery */}
       {task.attachments.length > 0 && (

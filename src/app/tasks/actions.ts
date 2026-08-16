@@ -89,6 +89,12 @@ export async function createTask(
     session.role === "ADMIN"
       ? String(formData.get("commits") ?? "").trim() || null
       : null;
+  const canEditQuote = session.role === "ADMIN" || session.role === "APPROVER";
+  const quotedHoursRaw = String(formData.get("quotedHours") ?? "").trim();
+  const quotedHours = canEditQuote && quotedHoursRaw ? parseFloat(quotedHoursRaw) : null;
+  const approvedBy = canEditQuote
+    ? String(formData.get("approvedBy") ?? "").trim() || null
+    : null;
 
   if (!title || !description || !appAreaId || !priority || !type) {
     return { error: "Title, description, app area, priority, and type are all required." };
@@ -120,6 +126,8 @@ export async function createTask(
         type,
         dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
         commits,
+        quotedHours,
+        approvedBy,
         assigneeId,
         foundInProduction,
         isDraft,
@@ -199,6 +207,34 @@ export async function updateTaskFields(taskId: string, formData: FormData): Prom
         : {}),
     },
   });
+
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/");
+}
+
+// ---------------------------------------------------------------------------
+// Budget quote -- hours Techaliance quoted, and who approved that budget.
+// ADMIN/APPROVER only (Roland/Danielle are APPROVER) -- Techaliance itself
+// never sets its own quote as approved, same least-trust principle as every
+// other write in this file.
+// ---------------------------------------------------------------------------
+
+export async function updateTaskQuote(taskId: string, formData: FormData): Promise<void> {
+  const session = await requireRole("ADMIN", "APPROVER");
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+
+  const quotedHoursRaw = String(formData.get("quotedHours") ?? "").trim();
+  let quotedHours: number | null = null;
+  if (quotedHoursRaw) {
+    quotedHours = parseFloat(quotedHoursRaw);
+    if (Number.isNaN(quotedHours) || quotedHours < 0) {
+      throw new Error("Quoted hours must be a positive number.");
+    }
+  }
+  const approvedBy = String(formData.get("approvedBy") ?? "").trim() || null;
+
+  await prisma.task.update({ where: { id: taskId }, data: { quotedHours, approvedBy } });
 
   revalidatePath(`/tasks/${taskId}`);
   revalidatePath("/");

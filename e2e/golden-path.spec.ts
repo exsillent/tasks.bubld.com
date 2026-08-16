@@ -238,4 +238,37 @@ test.describe("golden path", () => {
     await page.goto("/");
     await page.waitForURL("/login");
   });
+
+  test("budget quote: Roland can set it, Techaliance sees it read-only", async ({ page }) => {
+    await login(page, "yasir-e2e@example.com");
+    await page.getByRole("link", { name: "+ New Task" }).click();
+    await page.waitForURL("/tasks/new");
+    await page.getByLabel("Title").fill("E2E: quoted budget task");
+    await page.getByLabel("Description").fill("Needs a quote.");
+    await page.locator("select[name=appAreaId]").selectOption("customer_app");
+    await page.locator("select[name=type]").selectOption("FEATURE");
+    await page.locator("select[name=priority]").selectOption("MEDIUM");
+    await page.getByRole("button", { name: "Create Task" }).click();
+    await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+    const taskUrl = page.url();
+
+    await page.context().clearCookies();
+    await login(page, "roland-e2e@example.com");
+    await page.goto(taskUrl);
+    await page.locator("input[name=quotedHours]").fill("3.5");
+    await page.locator("input[name=approvedBy]").fill("Roland");
+    await page.getByRole("button", { name: "Save" }).click();
+    await page.waitForLoadState("networkidle");
+    await page.reload();
+    // Roland is an approver, so he always sees the editable inputs (not the
+    // static text) -- assert on the persisted values, not display text.
+    await expect(page.locator("input[name=quotedHours]")).toHaveValue("3.5");
+    await expect(page.locator("input[name=approvedBy]")).toHaveValue("Roland");
+
+    await page.context().clearCookies();
+    await login(page, "tech-e2e@example.com");
+    await page.goto(taskUrl);
+    await expect(page.getByText("3.5 hrs · budget approved by Roland")).toBeVisible();
+    await expect(page.locator("input[name=quotedHours]")).toHaveCount(0);
+  });
 });
