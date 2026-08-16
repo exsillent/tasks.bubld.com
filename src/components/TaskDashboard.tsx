@@ -106,13 +106,16 @@ export default function TaskDashboard({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Dashboard summary strip -- the only status filter on the page */}
-      <div className="flex flex-wrap gap-2">
+      {/* Status -- visually its own labeled section, and the only status filter on the page */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5">
+        <span className="axiBold text-xs text-neutral-400 uppercase tracking-wide mr-1">
+          Status
+        </span>
         {ALL_STATUSES.map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(statusFilter === s ? "" : s)}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors bg-white ${
               statusFilter === s
                 ? "border-brand bg-brand/5"
                 : "border-neutral-200 hover:border-neutral-300"
@@ -122,18 +125,19 @@ export default function TaskDashboard({
             <span className="text-neutral-500">{STATUS_LABELS[s]}</span>
           </button>
         ))}
-        {counts.prodCount > 0 && (
-          <button
-            onClick={() => setShowProdOnly((v) => !v)}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors ${
-              showProdOnly ? "border-red-500 bg-red-50" : "border-red-200 hover:border-red-300"
-            }`}
-          >
-            <span className="axiMed text-red-700">{counts.prodCount}</span>
-            <span className="text-red-600">Found in production</span>
-          </button>
-        )}
       </div>
+
+      {counts.prodCount > 0 && (
+        <button
+          onClick={() => setShowProdOnly((v) => !v)}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors w-fit ${
+            showProdOnly ? "border-red-500 bg-red-50" : "border-red-200 hover:border-red-300"
+          }`}
+        >
+          <span className="axiMed text-red-700">{counts.prodCount}</span>
+          <span className="text-red-600">Found in production</span>
+        </button>
+      )}
 
       {/* Search + filters */}
       <div className="flex flex-wrap gap-2 items-center">
@@ -217,7 +221,7 @@ export default function TaskDashboard({
             checked={showCompleted}
             onChange={(e) => setShowCompleted(e.target.checked)}
           />
-          Show Done tasks
+          Show Complete tasks
         </label>
         {(statusFilter ||
           assigneeFilter ||
