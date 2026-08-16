@@ -271,4 +271,48 @@ test.describe("golden path", () => {
     await expect(page.getByText("3.5 hrs · budget approved by Roland")).toBeVisible();
     await expect(page.locator("input[name=quotedHours]")).toHaveCount(0);
   });
+
+  test("auto-review badge and dashboard filter are Yasir-only", async ({ page }) => {
+    await login(page, "yasir-e2e@example.com");
+    await page.getByRole("link", { name: "+ New Task" }).click();
+    await page.waitForURL("/tasks/new");
+    await page.getByLabel("Title").fill("E2E: auto-reviewed task");
+    await page.getByLabel("Description").fill("Needs a Claude review pass.");
+    await page.locator("select[name=appAreaId]").selectOption("customer_app");
+    await page.locator("select[name=type]").selectOption("ERROR");
+    await page.locator("select[name=priority]").selectOption("MEDIUM");
+    await page.getByRole("button", { name: "Create Task" }).click();
+    await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+    const taskUrl = page.url();
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    // Two "Save" buttons can coexist while editing -- this one (title/
+    // description/commits/auto-review) and the always-visible budget-quote
+    // form's own Save -- so scope to the form that actually has the
+    // auto-review checkbox in it.
+    const editForm = page.locator("form", {
+      has: page.getByLabel("Auto-reviewed (only visible to you)"),
+    });
+    await editForm.getByLabel("Auto-reviewed (only visible to you)").check();
+    await editForm
+      .getByPlaceholder("What did you check, and what did you find?")
+      .fill("Checked dev_branch, confirmed the fix is live.");
+    await editForm.getByRole("button", { name: "Save" }).click();
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByText("Auto-reviewed", { exact: true }).first()).toBeVisible();
+
+    await page.goto("/");
+    await expect(
+      page.getByRole("button", { name: /Auto-reviewed, needs your review/ }),
+    ).toBeVisible();
+
+    await page.context().clearCookies();
+    await login(page, "tech-e2e@example.com");
+    await page.goto("/");
+    await expect(
+      page.getByRole("button", { name: /Auto-reviewed, needs your review/ }),
+    ).toHaveCount(0);
+    await page.goto(taskUrl);
+    await expect(page.getByText("Auto-reviewed", { exact: true })).toHaveCount(0);
+  });
 });

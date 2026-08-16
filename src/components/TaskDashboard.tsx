@@ -48,6 +48,7 @@ export default function TaskDashboard({
   const [includeComplete, setIncludeComplete] = useState(false);
   const [showProdOnly, setShowProdOnly] = useState(false);
   const [myTasksOnly, setMyTasksOnly] = useState(false);
+  const [showAutoReviewedOnly, setShowAutoReviewedOnly] = useState(false);
 
   const counts = useMemo(() => {
     const c: Record<Status, number> = {
@@ -59,11 +60,13 @@ export default function TaskDashboard({
       DONE: 0,
     };
     let prodCount = 0;
+    let autoReviewedCount = 0;
     for (const t of tasks) {
       c[t.status]++;
       if (t.foundInProduction) prodCount++;
+      if (t.autoReviewed) autoReviewedCount++;
     }
-    return { ...c, prodCount };
+    return { ...c, prodCount, autoReviewedCount };
   }, [tasks]);
 
   const filtered = useMemo(() => {
@@ -86,6 +89,7 @@ export default function TaskDashboard({
       if (priorityFilter && t.priority !== priorityFilter) return false;
       if (typeFilter && t.type !== typeFilter) return false;
       if (showProdOnly && !t.foundInProduction) return false;
+      if (showAutoReviewedOnly && !t.autoReviewed) return false;
       if (myTasksOnly && t.assigneeId !== currentUserId) return false;
       if (
         q &&
@@ -107,6 +111,7 @@ export default function TaskDashboard({
     typeFilter,
     includeComplete,
     showProdOnly,
+    showAutoReviewedOnly,
     myTasksOnly,
     currentUserId,
   ]);
@@ -156,17 +161,36 @@ export default function TaskDashboard({
         </label>
       </div>
 
-      {counts.prodCount > 0 && (
-        <button
-          onClick={() => setShowProdOnly((v) => !v)}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors w-fit ${
-            showProdOnly ? "border-red-500 bg-red-50" : "border-red-200 hover:border-red-300"
-          }`}
-        >
-          <span className="axiMed text-red-700">{counts.prodCount}</span>
-          <span className="text-red-600">Found in production</span>
-        </button>
-      )}
+      <div className="flex flex-wrap gap-2">
+        {counts.prodCount > 0 && (
+          <button
+            onClick={() => setShowProdOnly((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors w-fit ${
+              showProdOnly ? "border-red-500 bg-red-50" : "border-red-200 hover:border-red-300"
+            }`}
+          >
+            <span className="axiMed text-red-700">{counts.prodCount}</span>
+            <span className="text-red-600">Found in production</span>
+          </button>
+        )}
+        {/* Only ever non-zero for ADMIN -- autoReviewed is redacted to false
+            for everyone else at the query layer, so this button (and the
+            count) naturally disappears for non-admin sessions. */}
+        {counts.autoReviewedCount > 0 && (
+          <button
+            onClick={() => setShowAutoReviewedOnly((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors w-fit ${
+              showAutoReviewedOnly
+                ? "border-indigo-500 bg-indigo-50"
+                : "border-indigo-200 hover:border-indigo-300"
+            }`}
+            title="Tasks Claude has reviewed and left a note on -- your call is still needed"
+          >
+            <span className="axiMed text-indigo-700">{counts.autoReviewedCount}</span>
+            <span className="text-indigo-600">Auto-reviewed, needs your review</span>
+          </button>
+        )}
+      </div>
 
       {/* Search + filters */}
       <div className="flex flex-wrap gap-2 items-center">
@@ -251,6 +275,7 @@ export default function TaskDashboard({
           typeFilter ||
           includeComplete ||
           showProdOnly ||
+          showAutoReviewedOnly ||
           myTasksOnly ||
           search) && (
           <button
@@ -263,6 +288,7 @@ export default function TaskDashboard({
               setPriorityFilter("");
               setTypeFilter("");
               setShowProdOnly(false);
+              setShowAutoReviewedOnly(false);
               setMyTasksOnly(false);
             }}
             className="text-sm text-neutral-400 hover:text-neutral-700"
@@ -299,6 +325,9 @@ export default function TaskDashboard({
             <Badge label={STATUS_LABELS[t.status]} className={STATUS_COLORS[t.status]} />
             {t.foundInProduction && (
               <Badge label="Found in prod" className="bg-red-100 text-red-700" />
+            )}
+            {t.autoReviewed && (
+              <Badge label="Auto-reviewed" className="bg-indigo-100 text-indigo-700" />
             )}
             {isOverdue(t) && <Badge label="Overdue" className="bg-red-600 text-white" />}
             <span className="text-xs text-neutral-400 min-w-[80px] text-right">
