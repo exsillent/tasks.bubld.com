@@ -45,7 +45,6 @@ export default function TaskDashboard({
   const [appAreaFilter, setAppAreaFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "">("");
   const [typeFilter, setTypeFilter] = useState<TaskType | "">("");
-  const [showCompleted, setShowCompleted] = useState(false);
   const [showProdOnly, setShowProdOnly] = useState(false);
   const [myTasksOnly, setMyTasksOnly] = useState(false);
 
@@ -70,7 +69,13 @@ export default function TaskDashboard({
     const q = search.trim().toLowerCase();
     const qNumber = q.startsWith("#") ? q.slice(1) : q;
     return tasks.filter((t) => {
-      if (!showCompleted && t.status === "DONE" && statusFilter !== "DONE") return false;
+      // Complete tasks are hidden unless explicitly asked for -- and the
+      // Status strip's "Complete" badge (statusFilter === "DONE") is the
+      // one, unambiguous way to ask for them. There is deliberately no
+      // second "show completed too" control: an earlier version had both,
+      // and the checkbox went silently inert whenever the Complete badge
+      // was also active, since the badge already overrides the hide.
+      if (t.status === "DONE" && statusFilter !== "DONE") return false;
       if (statusFilter && t.status !== statusFilter) return false;
       if (assigneeFilter && t.assigneeId !== assigneeFilter) return false;
       if (appAreaFilter && t.appAreaId !== appAreaFilter) return false;
@@ -96,7 +101,6 @@ export default function TaskDashboard({
     appAreaFilter,
     priorityFilter,
     typeFilter,
-    showCompleted,
     showProdOnly,
     myTasksOnly,
     currentUserId,
@@ -214,14 +218,6 @@ export default function TaskDashboard({
             }}
           />
           My tasks
-        </label>
-        <label className="flex items-center gap-1.5 text-sm text-neutral-600">
-          <input
-            type="checkbox"
-            checked={showCompleted}
-            onChange={(e) => setShowCompleted(e.target.checked)}
-          />
-          Show Complete tasks
         </label>
         {(statusFilter ||
           assigneeFilter ||
