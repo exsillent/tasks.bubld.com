@@ -1,10 +1,16 @@
 import type { Priority, TaskType, Status } from "@prisma/client";
 
+// Wording is deliberately spelled out for a non-technical reader (Roland,
+// Danielle), not just internal shorthand. IN_REVIEW is Yasir's own check
+// before anything reaches the business approval step -- distinct from
+// STAGING_REVIEW, which is that approval step itself (the one Roland/
+// Danielle actually act on) and is worded to say so plainly rather than
+// relying on "staging" meaning something to a non-dev reader.
 export const STATUS_LABELS: Record<Status, string> = {
   OPEN: "Open",
   IN_PROGRESS: "In Progress",
-  IN_REVIEW: "In Review",
-  STAGING_REVIEW: "Staging Review",
+  IN_REVIEW: "Internal Review",
+  STAGING_REVIEW: "Pending Approval",
   APPROVED: "Approved",
   DONE: "Done",
 };

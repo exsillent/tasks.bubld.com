@@ -18,13 +18,8 @@ type Task = Awaited<ReturnType<typeof listVisibleTasks>>[number];
 type ActiveUser = Awaited<ReturnType<typeof listActiveUsers>>[number];
 type AppAreaOption = Awaited<ReturnType<typeof listAllAppAreas>>[number];
 
-const DASHBOARD_STATUSES: Status[] = [
-  "OPEN",
-  "IN_PROGRESS",
-  "IN_REVIEW",
-  "STAGING_REVIEW",
-  "APPROVED",
-];
+// Every status lives in this one clickable strip -- there is deliberately
+// no second "status" dropdown duplicating it elsewhere on the page.
 const ALL_STATUSES = Object.keys(STATUS_LABELS) as Status[];
 const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
 const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
@@ -111,9 +106,9 @@ export default function TaskDashboard({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Dashboard summary strip */}
+      {/* Dashboard summary strip -- the only status filter on the page */}
       <div className="flex flex-wrap gap-2">
-        {DASHBOARD_STATUSES.map((s) => (
+        {ALL_STATUSES.map((s) => (
           <button
             key={s}
             onClick={() => setStatusFilter(statusFilter === s ? "" : s)}
@@ -149,18 +144,6 @@ export default function TaskDashboard({
           onChange={(e) => setSearch(e.target.value)}
           className="border border-neutral-300 rounded-lg px-3 py-1.5 text-sm outline-none focus:border-brand transition-colors flex-1 min-w-[180px]"
         />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as Status | "")}
-          className={selectClass}
-        >
-          <option value="">All statuses</option>
-          {ALL_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {STATUS_LABELS[s]}
-            </option>
-          ))}
-        </select>
         <select
           value={assigneeFilter}
           onChange={(e) => {
@@ -234,7 +217,7 @@ export default function TaskDashboard({
             checked={showCompleted}
             onChange={(e) => setShowCompleted(e.target.checked)}
           />
-          Show completed
+          Show Done tasks
         </label>
         {(statusFilter ||
           assigneeFilter ||
