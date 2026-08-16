@@ -163,7 +163,15 @@ export default function TaskDashboard({
         </select>
         <select
           value={assigneeFilter}
-          onChange={(e) => setAssigneeFilter(e.target.value)}
+          onChange={(e) => {
+            // "My tasks" and picking a specific assignee both filter on the
+            // same field -- combining them (e.g. My tasks + Assignee=Roland)
+            // is a logically impossible AND that silently shows zero
+            // results with no indication why. Picking a specific assignee
+            // here takes over from "My tasks" instead of stacking with it.
+            setAssigneeFilter(e.target.value);
+            if (e.target.value) setMyTasksOnly(false);
+          }}
           className={selectClass}
         >
           <option value="">All assignees</option>
@@ -213,7 +221,10 @@ export default function TaskDashboard({
           <input
             type="checkbox"
             checked={myTasksOnly}
-            onChange={(e) => setMyTasksOnly(e.target.checked)}
+            onChange={(e) => {
+              setMyTasksOnly(e.target.checked);
+              if (e.target.checked) setAssigneeFilter("");
+            }}
           />
           My tasks
         </label>
