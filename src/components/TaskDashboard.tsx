@@ -45,6 +45,7 @@ export default function TaskDashboard({
   const [appAreaFilter, setAppAreaFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "">("");
   const [typeFilter, setTypeFilter] = useState<TaskType | "">("");
+  const [includeComplete, setIncludeComplete] = useState(false);
   const [showProdOnly, setShowProdOnly] = useState(false);
   const [myTasksOnly, setMyTasksOnly] = useState(false);
 
@@ -69,14 +70,17 @@ export default function TaskDashboard({
     const q = search.trim().toLowerCase();
     const qNumber = q.startsWith("#") ? q.slice(1) : q;
     return tasks.filter((t) => {
-      // Complete tasks are hidden unless explicitly asked for -- and the
-      // Status strip's "Complete" badge (statusFilter === "DONE") is the
-      // one, unambiguous way to ask for them. There is deliberately no
-      // second "show completed too" control: an earlier version had both,
-      // and the checkbox went silently inert whenever the Complete badge
-      // was also active, since the badge already overrides the hide.
-      if (t.status === "DONE" && statusFilter !== "DONE") return false;
-      if (statusFilter && t.status !== statusFilter) return false;
+      // Status: pick one badge (e.g. Open) to see just that stage, or
+      // check "+ Complete" to see that stage *and* Complete together (e.g.
+      // Open + Complete, skipping everything in between). No badge at all
+      // means "everything except Complete" by default, or truly everything
+      // once "+ Complete" is checked. Complete itself stays reachable on
+      // its own via its own badge either way.
+      if (statusFilter) {
+        if (t.status !== statusFilter && !(includeComplete && t.status === "DONE")) return false;
+      } else if (t.status === "DONE" && !includeComplete) {
+        return false;
+      }
       if (assigneeFilter && t.assigneeId !== assigneeFilter) return false;
       if (appAreaFilter && t.appAreaId !== appAreaFilter) return false;
       if (priorityFilter && t.priority !== priorityFilter) return false;
@@ -101,6 +105,7 @@ export default function TaskDashboard({
     appAreaFilter,
     priorityFilter,
     typeFilter,
+    includeComplete,
     showProdOnly,
     myTasksOnly,
     currentUserId,
@@ -129,6 +134,26 @@ export default function TaskDashboard({
             <span className="text-neutral-500">{STATUS_LABELS[s]}</span>
           </button>
         ))}
+        <label
+          className={`flex items-center gap-1.5 text-sm ml-1 ${
+            statusFilter === "DONE" ? "text-neutral-300" : "text-neutral-600"
+          }`}
+          title={
+            statusFilter === "DONE"
+              ? "Already showing only Complete"
+              : statusFilter
+                ? `Also show Complete alongside ${STATUS_LABELS[statusFilter]}`
+                : "Also show Complete tasks alongside everything else"
+          }
+        >
+          <input
+            type="checkbox"
+            checked={includeComplete}
+            disabled={statusFilter === "DONE"}
+            onChange={(e) => setIncludeComplete(e.target.checked)}
+          />
+          + Complete
+        </label>
       </div>
 
       {counts.prodCount > 0 && (
@@ -224,6 +249,7 @@ export default function TaskDashboard({
           appAreaFilter ||
           priorityFilter ||
           typeFilter ||
+          includeComplete ||
           showProdOnly ||
           myTasksOnly ||
           search) && (
@@ -233,6 +259,7 @@ export default function TaskDashboard({
               setStatusFilter("");
               setAssigneeFilter("");
               setAppAreaFilter("");
+              setIncludeComplete(false);
               setPriorityFilter("");
               setTypeFilter("");
               setShowProdOnly(false);

@@ -236,32 +236,34 @@ export async function updateTaskStatus(taskId: string, nextStatus: Status): Prom
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
 
-  const allowed = FORWARD_TRANSITIONS[task.status] ?? [];
-  if (!allowed.includes(nextStatus)) {
-    throw new Error(`Cannot move from ${task.status} to ${nextStatus}.`);
-  }
+  // ADMIN has full authority over every task -- not bound by the same
+  // step-by-step pipeline everyone else follows. Everyone else is still
+  // restricted to the normal forward transitions below.
+  if (session.role !== "ADMIN") {
+    const allowed = FORWARD_TRANSITIONS[task.status] ?? [];
+    if (!allowed.includes(nextStatus)) {
+      throw new Error(`Cannot move from ${task.status} to ${nextStatus}.`);
+    }
 
-  const isAssigneeOrAdmin =
-    session.role === "ADMIN" || task.assigneeId === session.sub;
+    // OPEN->IN_PROGRESS and IN_PROGRESS->IN_REVIEW: only the assignee doing
+    // the work moves it forward.
+    if (
+      (task.status === "OPEN" || task.status === "IN_PROGRESS") &&
+      task.assigneeId !== session.sub
+    ) {
+      throw new Error("Only the assignee can move this task forward.");
+    }
 
-  // OPEN->IN_PROGRESS and IN_PROGRESS->IN_REVIEW: the assignee doing the
-  // work (or ADMIN) moves it forward.
-  if (
-    (task.status === "OPEN" || task.status === "IN_PROGRESS") &&
-    !isAssigneeOrAdmin
-  ) {
-    throw new Error("Only the assignee can move this task forward.");
-  }
+    // IN_REVIEW -> STAGING_REVIEW or back to IN_PROGRESS: Yasir's own
+    // review gate, ADMIN only (so any other role reaching here is denied).
+    if (task.status === "IN_REVIEW") {
+      throw new Error("Only an admin can move a task out of review.");
+    }
 
-  // IN_REVIEW -> STAGING_REVIEW or back to IN_PROGRESS: Yasir's own review
-  // gate, ADMIN only.
-  if (task.status === "IN_REVIEW" && session.role !== "ADMIN") {
-    throw new Error("Only an admin can move a task out of review.");
-  }
-
-  // APPROVED -> DONE: marking it actually deployed, ADMIN only.
-  if (task.status === "APPROVED" && session.role !== "ADMIN") {
-    throw new Error("Only an admin can mark a task as deployed.");
+    // APPROVED -> DONE: marking it actually deployed, ADMIN only.
+    if (task.status === "APPROVED") {
+      throw new Error("Only an admin can mark a task as deployed.");
+    }
   }
 
   await prisma.task.update({ where: { id: taskId }, data: { status: nextStatus } });

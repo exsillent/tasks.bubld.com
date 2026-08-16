@@ -48,4 +48,40 @@ test.describe("dashboard filters", () => {
     await expect(assigneeFilter).toHaveValue("");
     await expect(page.getByText("E2E: filter conflict task")).toBeVisible();
   });
+
+  test("a status badge combined with + Complete shows both, not just one", async ({ page }) => {
+    await login(page, "yasir-e2e@example.com");
+
+    // One Open task, one Complete task.
+    await page.getByRole("link", { name: "+ New Task" }).click();
+    await page.getByLabel("Title").fill("E2E: combo open task");
+    await page.getByLabel("Description").fill("Stays open.");
+    await page.getByRole("button", { name: "Create Task" }).click();
+    await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+
+    await page.getByRole("link", { name: "+ New Task" }).click();
+    await page.getByLabel("Title").fill("E2E: combo complete task");
+    await page.getByLabel("Description").fill("Gets closed.");
+    await page.getByRole("button", { name: "Create Task" }).click();
+    await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+    page.once("dialog", (d) => d.accept());
+    await page.getByRole("button", { name: "Close" }).click();
+    await page.waitForLoadState("networkidle");
+
+    await page.goto("/");
+
+    // Open badge alone: only the Open task.
+    await page.getByRole("button", { name: /^\d+\s+Open$/ }).click();
+    await expect(page.getByText("E2E: combo open task")).toBeVisible();
+    await expect(page.getByText("E2E: combo complete task")).toHaveCount(0);
+
+    // + Open badge + "+ Complete": both tasks together.
+    await page.getByLabel("+ Complete").check();
+    await expect(page.getByText("E2E: combo open task")).toBeVisible();
+    await expect(page.getByText("E2E: combo complete task")).toBeVisible();
+
+    // Unchecking drops back to just Open.
+    await page.getByLabel("+ Complete").uncheck();
+    await expect(page.getByText("E2E: combo complete task")).toHaveCount(0);
+  });
 });

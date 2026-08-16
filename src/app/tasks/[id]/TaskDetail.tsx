@@ -75,22 +75,24 @@ export default function TaskDetail({
   // every task regardless of ownership).
   const isOwnerOrReviewer = isApproverOrAdmin || isCreator || isAssignee;
 
-  // Which statuses the plain dropdown may jump to from here, mirroring the
-  // server-side FORWARD_TRANSITIONS + role checks in actions.ts exactly --
-  // STAGING_REVIEW's own exits (approve/reject) stay their own dedicated
-  // flow below since they carry a note; DONE is only reachable here via
-  // Close (its own button, not a plain transition).
-  const enabledNextStatuses = new Set<Status>(
-    task.status === "OPEN" && isAssigneeOrAdmin
-      ? ["IN_PROGRESS"]
-      : task.status === "IN_PROGRESS" && isAssigneeOrAdmin
-        ? ["IN_REVIEW"]
-        : task.status === "IN_REVIEW" && isAdmin
-          ? ["STAGING_REVIEW", "IN_PROGRESS"]
-          : task.status === "APPROVED" && isAdmin
-            ? ["DONE"]
+  // Which statuses the plain dropdown may jump to from here. ADMIN has
+  // full authority over every task -- not bound by the step-by-step
+  // pipeline, so every status is open to them. Everyone else mirrors the
+  // server-side FORWARD_TRANSITIONS + role checks in actions.ts exactly:
+  // IN_REVIEW's and APPROVED's own exits are ADMIN-only, so non-admins get
+  // nothing from those two states here (empty set, falls through below) --
+  // STAGING_REVIEW's exits (approve/reject) stay their own dedicated flow
+  // since they carry a note; DONE is only reachable here via Close (its
+  // own button) for non-admins.
+  const enabledNextStatuses = isAdmin
+    ? new Set<Status>(STATUSES)
+    : new Set<Status>(
+        task.status === "OPEN" && isAssigneeOrAdmin
+          ? ["IN_PROGRESS"]
+          : task.status === "IN_PROGRESS" && isAssigneeOrAdmin
+            ? ["IN_REVIEW"]
             : [],
-  );
+      );
 
   function run(fn: () => Promise<void>) {
     setError(null);

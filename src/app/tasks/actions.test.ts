@@ -307,6 +307,23 @@ describe("task Server Actions", () => {
         "DONE",
       );
     });
+
+    it("ADMIN can jump straight to any status, skipping the normal pipeline", async () => {
+      const task = await makeTask(); // status OPEN, unassigned
+
+      await loginAs(admin);
+      await updateTaskStatus(task.id, "STAGING_REVIEW");
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
+        "STAGING_REVIEW",
+      );
+
+      // Also works going "backwards" -- ADMIN isn't bound by
+      // FORWARD_TRANSITIONS at all, unlike every other role.
+      await updateTaskStatus(task.id, "OPEN");
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
+        "OPEN",
+      );
+    });
   });
 
   // -------------------------------------------------------------------------
