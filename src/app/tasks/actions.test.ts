@@ -551,6 +551,74 @@ describe("task Server Actions", () => {
   });
 
   // -------------------------------------------------------------------------
+  describe("commits field (Yasir-only)", () => {
+    it("ADMIN can set commits, and sees them back", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await updateTaskFields(
+        task.id,
+        taskForm({ ...BASE_TASK_FIELDS, commits: "carwash_node_backend: d0036c51 -- fixed it" }),
+      );
+
+      const visible = await getVisibleTask(task.id, {
+        sub: admin.id,
+        name: admin.name,
+        email: admin.email,
+        role: "ADMIN",
+      });
+      expect(visible!.commits).toBe("carwash_node_backend: d0036c51 -- fixed it");
+    });
+
+    it("commits are redacted for a non-admin, even though they exist in the DB", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await updateTaskFields(
+        task.id,
+        taskForm({ ...BASE_TASK_FIELDS, commits: "secret-repo: abc123" }),
+      );
+
+      // Confirm it really is in the DB, not just untested.
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).commits).toBe(
+        "secret-repo: abc123",
+      );
+
+      const asApprover = await getVisibleTask(task.id, {
+        sub: approver.id,
+        name: approver.name,
+        email: approver.email,
+        role: "APPROVER",
+      });
+      expect(asApprover!.commits).toBeNull();
+
+      const list = await listVisibleTasks({
+        sub: approver.id,
+        name: approver.name,
+        email: approver.email,
+        role: "APPROVER",
+      });
+      expect(list.find((t) => t.id === task.id)!.commits).toBeNull();
+    });
+
+    it("a non-admin editing their own task cannot set commits, even by submitting the field", async () => {
+      await loginAs(approver);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const ownTask = await prisma.task.findFirstOrThrow({ where: { createdById: approver.id } });
+
+      await updateTaskFields(
+        ownTask.id,
+        taskForm({ ...BASE_TASK_FIELDS, title: "Edited by approver", commits: "sneaky: 999999" }),
+      );
+
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: ownTask.id } });
+      expect(updated.title).toBe("Edited by approver");
+      expect(updated.commits).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   describe("addComment and private notes", () => {
     it("any authenticated user who can see the task can comment", async () => {
       await loginAs(admin);

@@ -21,12 +21,26 @@ const TASK_INCLUDE = {
   appArea: true,
 } as const;
 
+/**
+ * Commit references are Yasir's own -- never sent to a non-admin browser
+ * in the first place, same enforcement pattern as private comments and
+ * draft tasks: redacted here at the query layer, not just hidden in the
+ * UI.
+ */
+function redactCommitsForRole<T extends { commits: string | null }>(
+  task: T,
+  role: SessionPayload["role"],
+): T {
+  return role === "ADMIN" ? task : { ...task, commits: null };
+}
+
 export async function listVisibleTasks(session: SessionPayload) {
-  return prisma.task.findMany({
+  const tasks = await prisma.task.findMany({
     where: visibleToUserWhere(session.sub),
     include: TASK_INCLUDE,
     orderBy: { updatedAt: "desc" },
   });
+  return tasks.map((t) => redactCommitsForRole(t, session.role));
 }
 
 /** Returns null if the task doesn't exist OR the viewer isn't allowed to see it (draft, not theirs). */
@@ -53,7 +67,7 @@ export async function getVisibleTask(taskId: string, session: SessionPayload) {
 
   if (!task) return null;
   if (task.isDraft && task.createdById !== session.sub) return null;
-  return task;
+  return redactCommitsForRole(task, session.role);
 }
 
 export async function listActiveUsers() {

@@ -216,6 +216,21 @@ export default function TaskDetail({
               className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm"
             />
           </div>
+          {isAdmin && (
+            <div className="flex flex-col gap-1">
+              <label htmlFor="commits" className="text-sm axiMed text-neutral-700">
+                Commits (only visible to you -- one per line, e.g. &quot;repo: hash -- what it did&quot;)
+              </label>
+              <textarea
+                id="commits"
+                name="commits"
+                defaultValue={task.commits ?? ""}
+                rows={3}
+                placeholder={"carwash_node_backend: d0036c51 -- fixed the rounding bug"}
+                className="border border-neutral-300 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-brand"
+              />
+            </div>
+          )}
           <div className="flex gap-2">
             <button type="submit" disabled={isPending} className="axiMed bg-brand text-white rounded-lg px-4 py-1.5 text-sm">
               Save
@@ -249,6 +264,16 @@ export default function TaskDetail({
               <span className="text-xs text-neutral-400 self-center">Due {formatDate(task.dueDate)}</span>
             )}
           </div>
+          {task.commits && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs axiMed text-neutral-400 uppercase tracking-wide">
+                Commits
+              </span>
+              <pre className="text-xs font-mono text-neutral-700 whitespace-pre-wrap bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2">
+                {task.commits}
+              </pre>
+            </div>
+          )}
         </div>
       )}
 

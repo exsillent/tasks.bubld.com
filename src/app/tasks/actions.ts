@@ -82,9 +82,13 @@ export async function createTask(
   const dueDateRaw = String(formData.get("dueDate") ?? "");
   const assigneeId = String(formData.get("assigneeId") ?? "") || null;
   const foundInProduction = formData.get("foundWhere") === "production";
-  // Only ADMIN's checkbox input is ever rendered in the UI, but a mutating
-  // action can't trust that -- re-check the role server-side too.
+  // Only ADMIN's checkbox/field inputs are ever rendered in the UI, but a
+  // mutating action can't trust that -- re-check the role server-side too.
   const isDraft = formData.get("isDraft") === "on" && session.role === "ADMIN";
+  const commits =
+    session.role === "ADMIN"
+      ? String(formData.get("commits") ?? "").trim() || null
+      : null;
 
   if (!title || !description || !appAreaId || !priority || !type) {
     return { error: "Title, description, app area, priority, and type are all required." };
@@ -115,6 +119,7 @@ export async function createTask(
         priority,
         type,
         dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
+        commits,
         assigneeId,
         foundInProduction,
         isDraft,
@@ -160,7 +165,7 @@ async function requireEditAccess(taskId: string) {
 }
 
 export async function updateTaskFields(taskId: string, formData: FormData): Promise<void> {
-  const { task } = await requireEditAccess(taskId);
+  const { session, task } = await requireEditAccess(taskId);
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
@@ -185,6 +190,13 @@ export async function updateTaskFields(taskId: string, formData: FormData): Prom
       priority,
       type,
       dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
+      // Commits are Yasir's own, same as isPrivate comments -- only ever
+      // written by ADMIN, regardless of what a non-admin's form submits.
+      // Omitted entirely (not overwritten with null) for anyone else, so
+      // a non-admin editing other fields can never blank it out.
+      ...(session.role === "ADMIN"
+        ? { commits: String(formData.get("commits") ?? "").trim() || null }
+        : {}),
     },
   });
 

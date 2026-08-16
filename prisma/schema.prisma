@@ -77,6 +77,12 @@ model Task {
   foundInProduction Boolean      @default(false)
   isDraft           Boolean      @default(false)
   reviewNote        String?
+  // Free text, one commit per line, chronological (oldest first) --
+  // recommended form "repo: hash -- what it did", so a reader can act on
+  // it directly (know which repo to look in) without reading the private
+  // notes first. Concrete evidence backing a Staging Review/Complete
+  // status, not just a claim.
+  commits           String?
   createdBy         User         @relation("CreatedBy", fields: [createdById], references: [id])
   createdById       String
   assignee          User?        @relation("AssignedTo", fields: [assigneeId], references: [id])
