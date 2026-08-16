@@ -89,6 +89,14 @@ model Task {
   // Visible to everyone; only ADMIN/APPROVER can set it (see updateTaskQuote).
   quotedHours       Float?
   approvedBy        String?
+  // Claude's own pass over a task (flag + a comprehensive note on what was
+  // checked/found), set when Yasir asks for a review sweep -- separate from
+  // the real STAGING_REVIEW workflow, which Roland/Danielle still drive
+  // normally. Yasir still makes his own approve/disapprove/reject call
+  // through the existing status controls; this is just a heads-up for him
+  // beforehand. ADMIN-only, same enforcement pattern as commits.
+  autoReviewed      Boolean      @default(false)
+  autoReviewNote    String?
   createdBy         User         @relation("CreatedBy", fields: [createdById], references: [id])
   createdById       String
   assignee          User?        @relation("AssignedTo", fields: [assigneeId], references: [id])

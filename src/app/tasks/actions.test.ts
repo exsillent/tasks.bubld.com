@@ -620,6 +620,87 @@ describe("task Server Actions", () => {
   });
 
   // -------------------------------------------------------------------------
+  describe("auto-review flag/note (Yasir-only)", () => {
+    it("ADMIN can mark a task auto-reviewed with a note, and sees it back", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await updateTaskFields(
+        task.id,
+        taskForm({
+          ...BASE_TASK_FIELDS,
+          autoReviewed: "on",
+          autoReviewNote: "Checked dev_branch, commit e240583 fixes this.",
+        }),
+      );
+
+      const visible = await getVisibleTask(task.id, {
+        sub: admin.id,
+        name: admin.name,
+        email: admin.email,
+        role: "ADMIN",
+      });
+      expect(visible!.autoReviewed).toBe(true);
+      expect(visible!.autoReviewNote).toBe("Checked dev_branch, commit e240583 fixes this.");
+    });
+
+    it("auto-review is redacted for a non-admin, even though it exists in the DB", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await updateTaskFields(
+        task.id,
+        taskForm({ ...BASE_TASK_FIELDS, autoReviewed: "on", autoReviewNote: "internal notes" }),
+      );
+
+      expect(
+        (await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).autoReviewed,
+      ).toBe(true);
+
+      const asApprover = await getVisibleTask(task.id, {
+        sub: approver.id,
+        name: approver.name,
+        email: approver.email,
+        role: "APPROVER",
+      });
+      expect(asApprover!.autoReviewed).toBe(false);
+      expect(asApprover!.autoReviewNote).toBeNull();
+
+      const list = await listVisibleTasks({
+        sub: approver.id,
+        name: approver.name,
+        email: approver.email,
+        role: "APPROVER",
+      });
+      const listed = list.find((t) => t.id === task.id)!;
+      expect(listed.autoReviewed).toBe(false);
+      expect(listed.autoReviewNote).toBeNull();
+    });
+
+    it("a non-admin editing their own task cannot set auto-review, even by submitting the fields", async () => {
+      await loginAs(approver);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const ownTask = await prisma.task.findFirstOrThrow({ where: { createdById: approver.id } });
+
+      await updateTaskFields(
+        ownTask.id,
+        taskForm({
+          ...BASE_TASK_FIELDS,
+          title: "Edited by approver",
+          autoReviewed: "on",
+          autoReviewNote: "sneaky",
+        }),
+      );
+
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: ownTask.id } });
+      expect(updated.title).toBe("Edited by approver");
+      expect(updated.autoReviewed).toBe(false);
+      expect(updated.autoReviewNote).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
   describe("updateTaskQuote (budget: hours quoted, who approved it)", () => {
     it("ADMIN can set quoted hours and approver name", async () => {
       await loginAs(admin);

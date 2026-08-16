@@ -244,6 +244,21 @@ export default function TaskDetail({
               />
             </div>
           )}
+          {isAdmin && (
+            <div className="flex flex-col gap-1">
+              <label className="flex items-center gap-2 text-sm axiMed text-neutral-700">
+                <input type="checkbox" name="autoReviewed" defaultChecked={task.autoReviewed} />
+                Auto-reviewed (only visible to you)
+              </label>
+              <textarea
+                name="autoReviewNote"
+                defaultValue={task.autoReviewNote ?? ""}
+                rows={4}
+                placeholder="What did you check, and what did you find?"
+                className="border border-neutral-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand"
+              />
+            </div>
+          )}
           <div className="flex gap-2">
             <button type="submit" disabled={isPending} className="axiMed bg-brand text-white rounded-lg px-4 py-1.5 text-sm">
               Save
@@ -272,6 +287,9 @@ export default function TaskDetail({
             <Badge label={PRIORITY_LABELS[task.priority]} className={PRIORITY_COLORS[task.priority]} />
             <Badge label={STATUS_LABELS[task.status]} className={STATUS_COLORS[task.status]} />
             {task.foundInProduction && <Badge label="Found in prod" className="bg-red-100 text-red-700" />}
+            {isAdmin && task.autoReviewed && (
+              <Badge label="Auto-reviewed" className="bg-indigo-100 text-indigo-700" />
+            )}
             {isOverdue(task) && <Badge label="Overdue" className="bg-red-600 text-white" />}
             {task.dueDate && (
               <span className="text-xs text-neutral-400 self-center">Due {formatDate(task.dueDate)}</span>
@@ -285,6 +303,16 @@ export default function TaskDetail({
               <pre className="text-xs font-mono text-neutral-700 whitespace-pre-wrap bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2">
                 {task.commits}
               </pre>
+            </div>
+          )}
+          {isAdmin && task.autoReviewNote && (
+            <div className="flex flex-col gap-1">
+              <span className="text-xs axiMed text-neutral-400 uppercase tracking-wide">
+                Auto-review note
+              </span>
+              <p className="text-xs text-neutral-700 whitespace-pre-wrap bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+                {task.autoReviewNote}
+              </p>
             </div>
           )}
         </div>

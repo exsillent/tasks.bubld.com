@@ -89,6 +89,11 @@ export async function createTask(
     session.role === "ADMIN"
       ? String(formData.get("commits") ?? "").trim() || null
       : null;
+  const autoReviewed = session.role === "ADMIN" && formData.get("autoReviewed") === "on";
+  const autoReviewNote =
+    session.role === "ADMIN"
+      ? String(formData.get("autoReviewNote") ?? "").trim() || null
+      : null;
   const canEditQuote = session.role === "ADMIN" || session.role === "APPROVER";
   const quotedHoursRaw = String(formData.get("quotedHours") ?? "").trim();
   const quotedHours = canEditQuote && quotedHoursRaw ? parseFloat(quotedHoursRaw) : null;
@@ -126,6 +131,8 @@ export async function createTask(
         type,
         dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
         commits,
+        autoReviewed,
+        autoReviewNote,
         quotedHours,
         approvedBy,
         assigneeId,
@@ -198,12 +205,17 @@ export async function updateTaskFields(taskId: string, formData: FormData): Prom
       priority,
       type,
       dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
-      // Commits are Yasir's own, same as isPrivate comments -- only ever
-      // written by ADMIN, regardless of what a non-admin's form submits.
-      // Omitted entirely (not overwritten with null) for anyone else, so
-      // a non-admin editing other fields can never blank it out.
+      // Commits and the auto-review flag/note are Yasir's own, same as
+      // isPrivate comments -- only ever written by ADMIN, regardless of
+      // what a non-admin's form submits. Omitted entirely (not overwritten
+      // with null) for anyone else, so a non-admin editing other fields can
+      // never blank them out.
       ...(session.role === "ADMIN"
-        ? { commits: String(formData.get("commits") ?? "").trim() || null }
+        ? {
+            commits: String(formData.get("commits") ?? "").trim() || null,
+            autoReviewed: formData.get("autoReviewed") === "on",
+            autoReviewNote: String(formData.get("autoReviewNote") ?? "").trim() || null,
+          }
         : {}),
     },
   });
