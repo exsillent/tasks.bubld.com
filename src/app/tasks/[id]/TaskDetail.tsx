@@ -15,6 +15,7 @@ import {
 import {
   updateTaskFields,
   updateTaskQuote,
+  toggleNextBuild,
   assignTask,
   updateTaskStatus,
   approveTask,
@@ -372,6 +373,41 @@ export default function TaskDetail({
               {task.quotedHours != null ? `${task.quotedHours} hrs` : "—"}
               {task.approvedBy ? ` · budget approved by ${task.approvedBy}` : ""}
             </span>
+          )}
+        </div>
+      )}
+
+      {/* Next build */}
+      {(task.build || canEditFields) && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-neutral-500">Build:</span>
+          {task.build ? (
+            <>
+              <span className="axiMed">
+                {task.build.shippedAt
+                  ? `Shipped in build #${task.build.number}`
+                  : `In next build (#${task.build.number})`}
+              </span>
+              {canEditFields && (
+                <button
+                  disabled={isPending}
+                  onClick={() => run(() => toggleNextBuild(task.id, false))}
+                  className="text-xs text-neutral-400 hover:text-neutral-700"
+                >
+                  Remove
+                </button>
+              )}
+            </>
+          ) : (
+            canEditFields && (
+              <button
+                disabled={isPending}
+                onClick={() => run(() => toggleNextBuild(task.id, true))}
+                className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1 hover:border-brand transition-colors"
+              >
+                + Include in next build
+              </button>
+            )
           )}
         </div>
       )}

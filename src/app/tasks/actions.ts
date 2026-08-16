@@ -7,7 +7,7 @@ import { requireSession, requireRole } from "@/lib/auth";
 import { getVisibleTask } from "@/lib/tasks";
 import { notifyByEmail } from "@/lib/notify";
 import { createUploadUrl, verifyUploadedObject } from "@/lib/storage";
-import type { Priority, TaskType, Status } from "@prisma/client";
+import type { Priority, TaskType, Status, Prisma } from "@prisma/client";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -249,6 +249,42 @@ export async function updateTaskQuote(taskId: string, formData: FormData): Promi
   await prisma.task.update({ where: { id: taskId }, data: { quotedHours, approvedBy } });
 
   revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/");
+}
+
+// ---------------------------------------------------------------------------
+// Builds -- tag tasks onto "the next build", ship it to archive as history.
+// ---------------------------------------------------------------------------
+
+/** Exactly one Build has shippedAt: null at a time -- creates it lazily. */
+async function getOrCreateOpenBuild(tx: Prisma.TransactionClient) {
+  const open = await tx.build.findFirst({ where: { shippedAt: null } });
+  if (open) return open;
+  const last = await tx.build.findFirst({ orderBy: { number: "desc" } });
+  return tx.build.create({ data: { number: (last?.number ?? 0) + 1 } });
+}
+
+export async function toggleNextBuild(taskId: string, include: boolean): Promise<void> {
+  const { task } = await requireEditAccess(taskId);
+
+  await prisma.$transaction(async (tx) => {
+    const buildId = include ? (await getOrCreateOpenBuild(tx)).id : null;
+    await tx.task.update({ where: { id: task.id }, data: { buildId } });
+  });
+
+  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath("/");
+}
+
+/** Archives the current open build as shipped history. ADMIN only. */
+export async function shipCurrentBuild(): Promise<void> {
+  await requireRole("ADMIN");
+  const open = await prisma.build.findFirst({ where: { shippedAt: null } });
+  if (!open) throw new Error("There's no open build to ship.");
+  const taskCount = await prisma.task.count({ where: { buildId: open.id } });
+  if (taskCount === 0) throw new Error("The next build has no tasks in it yet.");
+
+  await prisma.build.update({ where: { id: open.id }, data: { shippedAt: new Date() } });
   revalidatePath("/");
 }
 

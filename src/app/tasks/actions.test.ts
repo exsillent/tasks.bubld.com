@@ -8,6 +8,8 @@ import {
   createTask,
   updateTaskFields,
   updateTaskQuote,
+  toggleNextBuild,
+  shipCurrentBuild,
   assignTask,
   updateTaskStatus,
   approveTask,
@@ -767,6 +769,109 @@ describe("task Server Actions", () => {
       const task = await prisma.task.findFirstOrThrow();
       expect(task.quotedHours).toBeNull();
       expect(task.approvedBy).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  describe("next build (toggleNextBuild / shipCurrentBuild)", () => {
+    it("the task's creator can add it to the next build, lazily creating build #1", async () => {
+      await loginAs(approver);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow({ where: { createdById: approver.id } });
+
+      await toggleNextBuild(task.id, true);
+
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id }, include: { build: true } });
+      expect(updated.build).not.toBeNull();
+      expect(updated.build!.number).toBe(1);
+      expect(updated.build!.shippedAt).toBeNull();
+    });
+
+    it("a second task added afterward joins the same open build", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Task A" })).catch(() => {});
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Task B" })).catch(() => {});
+      const [a, b] = await prisma.task.findMany({ orderBy: { number: "asc" } });
+
+      await toggleNextBuild(a.id, true);
+      await toggleNextBuild(b.id, true);
+
+      const [ua, ub] = await Promise.all([
+        prisma.task.findUniqueOrThrow({ where: { id: a.id } }),
+        prisma.task.findUniqueOrThrow({ where: { id: b.id } }),
+      ]);
+      expect(ua.buildId).toBe(ub.buildId);
+      expect(await prisma.build.count()).toBe(1);
+    });
+
+    it("removing a task from the build clears buildId without deleting the Build row", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await toggleNextBuild(task.id, true);
+
+      await toggleNextBuild(task.id, false);
+
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(updated.buildId).toBeNull();
+      expect(await prisma.build.count()).toBe(1);
+    });
+
+    it("a non-owner, non-admin cannot toggle another user's task onto the build", async () => {
+      await loginAs(approver);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow({ where: { createdById: approver.id } });
+
+      await loginAs(contractor);
+      await expect(toggleNextBuild(task.id, true)).rejects.toThrow();
+    });
+
+    it("shipCurrentBuild is ADMIN-only", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await toggleNextBuild(task.id, true);
+
+      await loginAs(approver);
+      await expect(shipCurrentBuild()).rejects.toThrow();
+    });
+
+    it("shipCurrentBuild throws if there's no open build, or the open build is empty", async () => {
+      await loginAs(admin);
+      await expect(shipCurrentBuild()).rejects.toThrow("no open build");
+
+      // An open build with zero tasks (created then fully emptied out) also
+      // shouldn't be shippable.
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await toggleNextBuild(task.id, true);
+      await toggleNextBuild(task.id, false);
+      await expect(shipCurrentBuild()).rejects.toThrow("no tasks");
+    });
+
+    it("shipping archives the build; the next task tagged starts a fresh one", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await toggleNextBuild(task.id, true);
+
+      await shipCurrentBuild();
+
+      const shipped = await prisma.build.findFirstOrThrow({ where: { number: 1 } });
+      expect(shipped.shippedAt).not.toBeNull();
+
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Task after ship" })).catch(() => {});
+      const nextTask = await prisma.task.findFirstOrThrow({ where: { title: "Task after ship" } });
+      await toggleNextBuild(nextTask.id, true);
+
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: nextTask.id }, include: { build: true } });
+      expect(updated.build!.number).toBe(2);
+      expect(updated.build!.shippedAt).toBeNull();
+
+      // The originally shipped task keeps pointing at build #1 -- shipping
+      // doesn't retroactively clear membership, that's the permanent record.
+      const originalTask = await prisma.task.findUniqueOrThrow({ where: { id: task.id }, include: { build: true } });
+      expect(originalTask.build!.number).toBe(1);
     });
   });
 

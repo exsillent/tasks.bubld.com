@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import Badge from "./Badge";
 import {
@@ -11,6 +12,7 @@ import {
   TYPE_LABELS,
   TYPE_COLORS,
 } from "@/lib/labels";
+import { shipCurrentBuild } from "@/app/tasks/actions";
 import type { listVisibleTasks, listActiveUsers, listAllAppAreas } from "@/lib/tasks";
 import type { Status, Priority, TaskType } from "@prisma/client";
 
@@ -33,12 +35,17 @@ export default function TaskDashboard({
   users,
   appAreas,
   currentUserId,
+  isAdmin,
 }: {
   tasks: Task[];
   users: ActiveUser[];
   appAreas: AppAreaOption[];
   currentUserId: string;
+  isAdmin: boolean;
 }) {
+  const router = useRouter();
+  const [isShipping, startShipTransition] = useTransition();
+  const [shipError, setShipError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<Status | "">("");
   const [assigneeFilter, setAssigneeFilter] = useState("");
@@ -49,6 +56,31 @@ export default function TaskDashboard({
   const [showProdOnly, setShowProdOnly] = useState(false);
   const [myTasksOnly, setMyTasksOnly] = useState(false);
   const [showAutoReviewedOnly, setShowAutoReviewedOnly] = useState(false);
+  const [showNextBuildOnly, setShowNextBuildOnly] = useState(false);
+
+  // The open build (shippedAt: null) is "the next build" everyone tags
+  // tasks onto -- derived from each task's own build relation rather than
+  // a separate fetch, since listVisibleTasks already includes it.
+  const nextBuild = useMemo(() => {
+    const members = tasks.filter((t) => t.build && !t.build.shippedAt);
+    if (members.length === 0) return null;
+    const ready = members.every((t) => t.status === "APPROVED" || t.status === "DONE");
+    return { number: members[0].build!.number, count: members.length, ready };
+  }, [tasks]);
+
+  function handleShip() {
+    if (!nextBuild) return;
+    if (!window.confirm(`Ship build #${nextBuild.number}? This archives it as shipped history.`)) return;
+    setShipError(null);
+    startShipTransition(async () => {
+      try {
+        await shipCurrentBuild();
+        router.refresh();
+      } catch (err) {
+        setShipError(err instanceof Error ? err.message : "Failed to ship build.");
+      }
+    });
+  }
 
   const counts = useMemo(() => {
     const c: Record<Status, number> = {
@@ -90,6 +122,7 @@ export default function TaskDashboard({
       if (typeFilter && t.type !== typeFilter) return false;
       if (showProdOnly && !t.foundInProduction) return false;
       if (showAutoReviewedOnly && !t.autoReviewed) return false;
+      if (showNextBuildOnly && !(t.build && !t.build.shippedAt)) return false;
       if (myTasksOnly && t.assigneeId !== currentUserId) return false;
       if (
         q &&
@@ -112,6 +145,7 @@ export default function TaskDashboard({
     includeComplete,
     showProdOnly,
     showAutoReviewedOnly,
+    showNextBuildOnly,
     myTasksOnly,
     currentUserId,
   ]);
@@ -190,7 +224,42 @@ export default function TaskDashboard({
             <span className="text-indigo-600">Auto-reviewed, needs your review</span>
           </button>
         )}
+        {nextBuild && (
+          <button
+            onClick={() => setShowNextBuildOnly((v) => !v)}
+            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors w-fit ${
+              showNextBuildOnly
+                ? nextBuild.ready
+                  ? "border-emerald-500 bg-emerald-50"
+                  : "border-blue-500 bg-blue-50"
+                : nextBuild.ready
+                  ? "border-emerald-200 hover:border-emerald-300"
+                  : "border-blue-200 hover:border-blue-300"
+            }`}
+          >
+            <span className={`axiMed ${nextBuild.ready ? "text-emerald-700" : "text-blue-700"}`}>
+              {nextBuild.count}
+            </span>
+            <span className={nextBuild.ready ? "text-emerald-600" : "text-blue-600"}>
+              {nextBuild.ready ? "Next build is ready" : "Included in next build"}
+            </span>
+          </button>
+        )}
+        {isAdmin && nextBuild && (
+          <button
+            onClick={handleShip}
+            disabled={isShipping}
+            className="flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 hover:border-brand transition-colors disabled:opacity-50"
+          >
+            Ship build #{nextBuild.number}
+          </button>
+        )}
       </div>
+      {shipError && (
+        <p className="text-sm text-red-600" role="alert">
+          {shipError}
+        </p>
+      )}
 
       {/* Search + filters */}
       <div className="flex flex-wrap gap-2 items-center">
@@ -276,6 +345,7 @@ export default function TaskDashboard({
           includeComplete ||
           showProdOnly ||
           showAutoReviewedOnly ||
+          showNextBuildOnly ||
           myTasksOnly ||
           search) && (
           <button
@@ -289,6 +359,7 @@ export default function TaskDashboard({
               setTypeFilter("");
               setShowProdOnly(false);
               setShowAutoReviewedOnly(false);
+              setShowNextBuildOnly(false);
               setMyTasksOnly(false);
             }}
             className="text-sm text-neutral-400 hover:text-neutral-700"
@@ -328,6 +399,9 @@ export default function TaskDashboard({
             )}
             {t.autoReviewed && (
               <Badge label="Auto-reviewed" className="bg-indigo-100 text-indigo-700" />
+            )}
+            {t.build && !t.build.shippedAt && (
+              <Badge label="Next build" className="bg-blue-100 text-blue-700" />
             )}
             {isOverdue(t) && <Badge label="Overdue" className="bg-red-600 text-white" />}
             <span className="text-xs text-neutral-400 min-w-[80px] text-right">

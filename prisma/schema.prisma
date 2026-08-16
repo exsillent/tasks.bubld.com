@@ -63,6 +63,19 @@ model AppArea {
   tasks     Task[]
 }
 
+// A shippable batch of tasks. Exactly one Build should ever have
+// shippedAt: null at a time -- that's "the next build" everyone tags
+// tasks onto. Shipping it (setting shippedAt) archives it as permanent
+// history; the next task tagged after that lazily creates a fresh one
+// (see getOrCreateOpenBuild in actions.ts).
+model Build {
+  id        String    @id @default(cuid())
+  number    Int       @unique
+  shippedAt DateTime?
+  createdAt DateTime  @default(now())
+  tasks     Task[]
+}
+
 model Task {
   id                String       @id @default(cuid())
   number            Int          @unique
@@ -74,6 +87,8 @@ model Task {
   priority          Priority
   type              TaskType
   status            Status       @default(OPEN)
+  build             Build?       @relation(fields: [buildId], references: [id])
+  buildId           String?
   foundInProduction Boolean      @default(false)
   isDraft           Boolean      @default(false)
   reviewNote        String?
@@ -110,6 +125,7 @@ model Task {
   @@index([assigneeId])
   @@index([createdById])
   @@index([appAreaId])
+  @@index([buildId])
 }
 
 model Comment {

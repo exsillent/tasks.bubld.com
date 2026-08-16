@@ -315,4 +315,44 @@ test.describe("golden path", () => {
     await page.goto(taskUrl);
     await expect(page.getByText("Auto-reviewed", { exact: true })).toHaveCount(0);
   });
+
+  test("next build: tag a task, label flips to ready once approved, then ships", async ({ page }) => {
+    await login(page, "yasir-e2e@example.com");
+    await page.getByRole("link", { name: "+ New Task" }).click();
+    await page.waitForURL("/tasks/new");
+    await page.getByLabel("Title").fill("E2E: next build task");
+    await page.getByLabel("Description").fill("Should show up in the next build.");
+    await page.locator("select[name=appAreaId]").selectOption("customer_app");
+    await page.locator("select[name=type]").selectOption("FEATURE");
+    await page.locator("select[name=priority]").selectOption("MEDIUM");
+    await page.getByRole("button", { name: "Create Task" }).click();
+    await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+    const taskUrl = page.url();
+
+    await page.getByRole("button", { name: "+ Include in next build" }).click();
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByText("In next build (#1)")).toBeVisible();
+
+    await page.goto("/");
+    await expect(
+      page.getByRole("button", { name: /Included in next build/ }),
+    ).toBeVisible();
+
+    // Admin can jump straight to APPROVED -- that flips the build's
+    // readiness label since it's now the only member and it's ready.
+    await page.goto(taskUrl);
+    await page.locator("#statusSelect").selectOption("APPROVED");
+    await page.waitForLoadState("networkidle");
+    await page.goto("/");
+    await expect(page.getByRole("button", { name: /Next build is ready/ })).toBeVisible();
+
+    page.once("dialog", (d) => d.accept());
+    await page.getByRole("button", { name: /Ship build #1/ }).click();
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("button", { name: /Next build is ready/ })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /Ship build/ })).toHaveCount(0);
+
+    await page.goto(taskUrl);
+    await expect(page.getByText("Shipped in build #1")).toBeVisible();
+  });
 });

@@ -18,7 +18,13 @@ export default async function HomePage() {
     <>
       <AppHeader session={session} />
       <main className="flex-1 px-4 sm:px-6 py-6 max-w-6xl w-full mx-auto">
-        <TaskDashboard tasks={tasks} users={users} appAreas={appAreas} currentUserId={session.sub} />
+        <TaskDashboard
+          tasks={tasks}
+          users={users}
+          appAreas={appAreas}
+          currentUserId={session.sub}
+          isAdmin={session.role === "ADMIN"}
+        />
       </main>
     </>
   );

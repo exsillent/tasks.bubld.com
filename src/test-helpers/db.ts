@@ -7,6 +7,7 @@ export async function resetDb() {
   await prisma.attachment.deleteMany();
   await prisma.comment.deleteMany();
   await prisma.task.deleteMany();
+  await prisma.build.deleteMany();
   await prisma.loginAttempt.deleteMany();
   await prisma.user.deleteMany();
 }

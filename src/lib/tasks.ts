@@ -19,6 +19,7 @@ const TASK_INCLUDE = {
   createdBy: { select: { id: true, name: true, email: true, role: true } },
   assignee: { select: { id: true, name: true, email: true, role: true } },
   appArea: true,
+  build: { select: { number: true, shippedAt: true } },
 } as const;
 
 /**
