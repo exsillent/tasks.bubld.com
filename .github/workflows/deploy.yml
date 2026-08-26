@@ -1,0 +1,85 @@
+name: Deploy to production
+
+# tasks.bubld.com runs on the same shared EC2 box as bubld.com/admin
+# staging (Name=Bubld-Staging-rebuild), via an existing CodeDeploy
+# application ("tasks-bubld-com") and deployment group
+# ("tasks-bubld-com-deployment") that were already set up and proven
+# working (last used 2026-08-16) -- this workflow is just the missing
+# automated trigger for them. The actual install (npm ci, prisma
+# migrate deploy, npm run build, pm2 restart) happens on the box
+# itself via build.sh -- see that file's own comments for why (native
+# better-sqlite3/Prisma binaries must be built for the box's exact
+# arch, and the SQLite DB lives outside public_html so redeploys never
+# touch it).
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+        continue-on-error: true # pre-existing issues, not a deploy gate yet
+
+      - name: Test
+        run: npm test
+
+      - name: Build (fail fast, same as the box will do for real)
+        run: npm run build
+
+      - name: Package source-only artifact
+        # git archive, not zip -r -- includes exactly what's tracked in
+        # git (matches the manual zips this replaces), so it can never
+        # accidentally bundle node_modules, .next, .env, or the local
+        # SQLite file even if one exists in the working directory.
+        run: git archive --format=zip --output=deploy.zip HEAD
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Upload artifact to S3
+        id: upload
+        run: |
+          KEY="tasks-bubld-com/$(date -u +%Y%m%d%H%M%S).zip"
+          aws s3 cp deploy.zip "s3://bubld-tasks-deploy-artifacts/${KEY}"
+          echo "key=${KEY}" >> "$GITHUB_OUTPUT"
+
+      - name: Trigger CodeDeploy deployment
+        id: deploy
+        run: |
+          DEPLOYMENT_ID=$(aws deploy create-deployment \
+            --application-name tasks-bubld-com \
+            --deployment-group-name tasks-bubld-com-deployment \
+            --s3-location bucket=bubld-tasks-deploy-artifacts,key=${{ steps.upload.outputs.key }},bundleType=zip \
+            --description "GitHub Actions: ${{ github.sha }}" \
+            --query "deploymentId" --output text)
+          echo "id=${DEPLOYMENT_ID}" >> "$GITHUB_OUTPUT"
+          echo "Deployment: ${DEPLOYMENT_ID}"
+
+      - name: Wait for deployment to finish
+        run: aws deploy wait deployment-successful --deployment-id ${{ steps.deploy.outputs.id }}
