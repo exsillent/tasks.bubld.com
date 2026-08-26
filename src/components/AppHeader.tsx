@@ -11,6 +11,12 @@ export default function AppHeader({ session }: { session: SessionPayload }) {
         <span className="axiBold text-sm text-neutral-500 hidden sm:inline">Tasks</span>
       </Link>
       <div className="flex items-center gap-4">
+        <Link
+          href="/activity"
+          className="text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+        >
+          Activity
+        </Link>
         {session.role === "ADMIN" && (
           <Link
             href="/admin"
@@ -19,12 +25,17 @@ export default function AppHeader({ session }: { session: SessionPayload }) {
             Settings
           </Link>
         )}
-        <Link
+        {/* Plain <a>, not <Link> -- /tasks/new's literal path also matches
+            the @modal slot's (.)tasks/[id] interception (id="new"), and
+            Next's client router skips re-rendering `children` on an
+            intercepted soft navigation by design. A real page load bypasses
+            interception entirely, landing on the actual full-page form. */}
+        <a
           href="/tasks/new"
           className="axiMed text-sm bg-brand text-white rounded-lg px-3.5 py-1.5 hover:opacity-90 transition-opacity"
         >
           + New Task
-        </Link>
+        </a>
         <div className="flex items-center gap-2 text-sm">
           <span className="axiMed text-neutral-700">{session.name}</span>
           <form action={logoutAction}>

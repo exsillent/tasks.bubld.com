@@ -11,9 +11,8 @@ import {
   toggleNextBuild,
   shipCurrentBuild,
   assignTask,
-  updateTaskStatus,
-  approveTask,
-  rejectTask,
+  setStage,
+  setStageStatus,
   reopenTask,
   closeTask,
   deleteTask,
@@ -232,270 +231,126 @@ describe("task Server Actions", () => {
   });
 
   // -------------------------------------------------------------------------
-  describe("updateTaskStatus transition matrix", () => {
-    async function makeTask(assigneeId?: string) {
+  // Free-form as of 2026-08-17: any logged-in user can set stage/status on
+  // any task, in any combination, at any time -- no pipeline, no role gate.
+  describe("setStage / setStageStatus", () => {
+    async function makeTask() {
       await loginAs(admin);
       await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow();
-      if (assigneeId) {
-        await assignTask(task.id, assigneeId);
-      }
-      return task;
+      return prisma.task.findFirstOrThrow();
     }
 
-    it("assignee can move OPEN -> IN_PROGRESS", async () => {
-      const task = await makeTask(contractor.id);
-      await loginAs(contractor);
-      await updateTaskStatus(task.id, "IN_PROGRESS");
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "IN_PROGRESS",
-      );
-    });
-
-    it("a non-assignee, non-admin cannot move OPEN -> IN_PROGRESS", async () => {
-      const task = await makeTask(contractor.id);
-      await loginAs(approver);
-      await expect(updateTaskStatus(task.id, "IN_PROGRESS")).rejects.toThrow(
-        "Only the assignee can move this task forward.",
-      );
-    });
-
-    it("ADMIN can move OPEN -> IN_PROGRESS even when unassigned", async () => {
+    it("defaults to Development / Open on creation", async () => {
       const task = await makeTask();
-      await loginAs(admin);
-      await updateTaskStatus(task.id, "IN_PROGRESS");
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "IN_PROGRESS",
-      );
+      expect(task.stage).toBe("DEVELOPMENT");
+      expect(task.stageStatus).toBe("OPEN");
     });
 
-    it("rejects an invalid/skipped transition (OPEN -> STAGING_REVIEW)", async () => {
-      const task = await makeTask(contractor.id);
-      await loginAs(contractor);
-      await expect(updateTaskStatus(task.id, "STAGING_REVIEW")).rejects.toThrow(
-        "Cannot move from OPEN to STAGING_REVIEW.",
-      );
-    });
-
-    it("only ADMIN can move IN_REVIEW -> STAGING_REVIEW", async () => {
-      const task = await makeTask(contractor.id);
-      await loginAs(contractor);
-      await updateTaskStatus(task.id, "IN_PROGRESS");
-      await updateTaskStatus(task.id, "IN_REVIEW");
-
-      // Contractor cannot push it into staging review themselves.
-      await expect(updateTaskStatus(task.id, "STAGING_REVIEW")).rejects.toThrow(
-        "Only an admin can move a task out of review.",
-      );
-
-      await loginAs(admin);
-      await updateTaskStatus(task.id, "STAGING_REVIEW");
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "STAGING_REVIEW",
-      );
-    });
-
-    it("only ADMIN can mark APPROVED -> DONE", async () => {
+    it("any logged-in user can set stage on any task, including CONTRACTOR", async () => {
       const task = await makeTask();
-      await prisma.task.update({ where: { id: task.id }, data: { status: "APPROVED" } });
-
-      await loginAs(approver);
-      await expect(updateTaskStatus(task.id, "DONE")).rejects.toThrow(
-        "Only an admin can mark a task as deployed.",
-      );
-
-      await loginAs(admin);
-      await updateTaskStatus(task.id, "DONE");
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "DONE",
+      await loginAs(contractor);
+      await setStage(task.id, "PRODUCTION");
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).stage).toBe(
+        "PRODUCTION",
       );
     });
 
-    it("ADMIN can jump straight to any status, skipping the normal pipeline", async () => {
-      const task = await makeTask(); // status OPEN, unassigned
+    it("any logged-in user can set status on any task", async () => {
+      const task = await makeTask();
+      await loginAs(approver);
+      // IN_PROGRESS, not COMPLETE -- setting COMPLETE auto-advances the
+      // stage and resets status back to OPEN there (see setStageStatus),
+      // which would make this permission check also depend on that
+      // separate behavior instead of testing status-setting in isolation.
+      await setStageStatus(task.id, "IN_PROGRESS");
+      expect(
+        (await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).stageStatus,
+      ).toBe("IN_PROGRESS");
+    });
 
-      await loginAs(admin);
-      await updateTaskStatus(task.id, "STAGING_REVIEW");
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "STAGING_REVIEW",
-      );
-
-      // Also works going "backwards" -- ADMIN isn't bound by
-      // FORWARD_TRANSITIONS at all, unlike every other role.
-      await updateTaskStatus(task.id, "OPEN");
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "OPEN",
+    it("can jump straight to any stage, skipping the others, and go backwards too", async () => {
+      const task = await makeTask();
+      await loginAs(contractor);
+      await setStage(task.id, "PRODUCTION");
+      await setStage(task.id, "DEVELOPMENT");
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).stage).toBe(
+        "DEVELOPMENT",
       );
     });
-  });
 
-  // -------------------------------------------------------------------------
-  describe("approveTask / rejectTask", () => {
-    async function makeStagingTask() {
-      await loginAs(admin);
-      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow();
-      await prisma.task.update({ where: { id: task.id }, data: { status: "STAGING_REVIEW" } });
-      return task;
-    }
-
-    it("APPROVER can approve a task in staging review", async () => {
-      const task = await makeStagingTask();
-      await loginAs(approver);
-      await approveTask(task.id, "Looks good");
-      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
-      expect(updated.status).toBe("APPROVED");
-      expect(updated.reviewNote).toBe("Looks good");
-
+    it("setting stage/status posts a system comment recording who changed it", async () => {
+      const task = await makeTask();
+      await loginAs(contractor);
+      await setStage(task.id, "STAGING");
       const comments = await prisma.comment.findMany({ where: { taskId: task.id } });
-      expect(comments.some((c) => c.isSystem && c.body.includes("Approved by Roland"))).toBe(
-        true,
-      );
-    });
-
-    it("CONTRACTOR cannot approve", async () => {
-      const task = await makeStagingTask();
-      await loginAs(contractor);
-      await expect(approveTask(task.id, "")).rejects.toThrow("Not authorized");
-    });
-
-    it("cannot approve a task that isn't in STAGING_REVIEW", async () => {
-      await loginAs(admin);
-      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow(); // status OPEN
-
-      await loginAs(approver);
-      await expect(approveTask(task.id, "")).rejects.toThrow(
-        "Only a task in staging review can be approved.",
-      );
-    });
-
-    it("rejectTask requires a non-empty note", async () => {
-      const task = await makeStagingTask();
-      await loginAs(approver);
-      await expect(rejectTask(task.id, "   ")).rejects.toThrow(
-        "A note is required when rejecting a task.",
-      );
-    });
-
-    it("rejectTask sends the task back to IN_PROGRESS with the note recorded", async () => {
-      const task = await makeStagingTask();
-      await loginAs(otherApprover);
-      await rejectTask(task.id, "The button is misaligned");
-      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
-      expect(updated.status).toBe("IN_PROGRESS");
-      expect(updated.reviewNote).toBe("The button is misaligned");
+      expect(
+        comments.some((c) => c.isSystem && c.body.includes("Techaliance") && c.body.includes("Staging")),
+      ).toBe(true);
     });
   });
 
   // -------------------------------------------------------------------------
+  // Close/reopen are manual and decoupled from stage/status (2026-08-17) --
+  // any logged-in user, from/to any stage/status, at any time.
   describe("reopenTask", () => {
-    it("APPROVER can reopen a DONE task", async () => {
+    it("any logged-in user can reopen a closed task", async () => {
       await loginAs(admin);
       await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
       const task = await prisma.task.findFirstOrThrow();
-      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
-
-      await loginAs(approver);
-      await reopenTask(task.id);
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "IN_PROGRESS",
-      );
-    });
-
-    it("cannot reopen a task that isn't DONE", async () => {
-      await loginAs(admin);
-      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow();
-
-      await loginAs(admin);
-      await expect(reopenTask(task.id)).rejects.toThrow("Only a done task can be reopened.");
-    });
-
-    it("CONTRACTOR cannot reopen a task they neither created nor are assigned to", async () => {
-      await loginAs(admin);
-      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow();
-      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
-
-      await loginAs(contractor);
-      await expect(reopenTask(task.id)).rejects.toThrow("Not authorized");
-    });
-
-    it("the task's own creator can reopen it, even without a reviewer role", async () => {
-      await loginAs(contractor);
-      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow();
-      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
+      await closeTask(task.id);
 
       await loginAs(contractor);
       await reopenTask(task.id);
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "IN_PROGRESS",
-      );
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(updated.closed).toBe(false);
+      expect(updated.closedAt).toBeNull();
     });
 
-    it("the task's own assignee can reopen it, even without a reviewer role", async () => {
+    it("cannot reopen a task that isn't closed", async () => {
       await loginAs(admin);
       await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
       const task = await prisma.task.findFirstOrThrow();
-      await assignTask(task.id, contractor.id);
-      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
 
-      await loginAs(contractor);
-      await reopenTask(task.id);
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "IN_PROGRESS",
-      );
+      await expect(reopenTask(task.id)).rejects.toThrow("Task is not closed.");
     });
   });
 
   // -------------------------------------------------------------------------
   describe("closeTask", () => {
-    it("the creator can close their own task from any status", async () => {
+    it("any logged-in user can close a task from any stage/status, and it's timestamped", async () => {
       await loginAs(contractor);
-      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow(); // status OPEN
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {}); // stage=DEVELOPMENT, status=OPEN
+      const task = await prisma.task.findFirstOrThrow();
 
       await loginAs(contractor);
       await closeTask(task.id);
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "DONE",
-      );
+      const updated = await prisma.task.findUniqueOrThrow({ where: { id: task.id } });
+      expect(updated.closed).toBe(true);
+      expect(updated.closedAt).not.toBeNull();
+      // Closing doesn't touch stage/status -- they're independent axes.
+      expect(updated.stage).toBe("DEVELOPMENT");
+      expect(updated.stageStatus).toBe("OPEN");
 
       const comments = await prisma.comment.findMany({ where: { taskId: task.id } });
       expect(comments.some((c) => c.isSystem && c.body.includes("Closed by"))).toBe(true);
     });
 
-    it("the assignee can close a task even if they didn't create it", async () => {
+    it("someone with no relation to the task can still close it -- fully open, no ownership check", async () => {
       await loginAs(admin);
       await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
       const task = await prisma.task.findFirstOrThrow();
-      await assignTask(task.id, contractor.id);
 
       await loginAs(contractor);
       await closeTask(task.id);
-      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).status).toBe(
-        "DONE",
-      );
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).closed).toBe(true);
     });
 
-    it("someone who is neither creator, assignee, nor reviewer cannot close a task", async () => {
+    it("cannot close a task that's already closed", async () => {
       await loginAs(admin);
       await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
       const task = await prisma.task.findFirstOrThrow();
+      await closeTask(task.id);
 
-      await loginAs(contractor);
-      await expect(closeTask(task.id)).rejects.toThrow("Not authorized");
-    });
-
-    it("cannot close a task that's already Done", async () => {
-      await loginAs(admin);
-      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
-      const task = await prisma.task.findFirstOrThrow();
-      await prisma.task.update({ where: { id: task.id }, data: { status: "DONE" } });
-
-      await loginAs(admin);
       await expect(closeTask(task.id)).rejects.toThrow("Task is already closed.");
     });
   });

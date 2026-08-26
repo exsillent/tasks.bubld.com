@@ -355,4 +355,48 @@ test.describe("golden path", () => {
     await page.goto(taskUrl);
     await expect(page.getByText("Shipped in build #1")).toBeVisible();
   });
+
+  test("marking a stage's status Complete auto-advances to the next stage, except from Production", async ({
+    page,
+  }) => {
+    await login(page, "yasir-e2e@example.com");
+    await page.getByRole("link", { name: "+ New Task" }).click();
+    await page.getByLabel("Title").fill("E2E: stage auto-advance task");
+    await page.getByLabel("Description").fill("Used to verify Complete auto-advances stage.");
+    await page.getByRole("button", { name: "Create Task" }).click();
+    await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+
+    const stageSelect = page.locator("#stageSelect");
+    const statusSelect = page.locator("#stageStatusSelect");
+
+    // Starts in Development / Open.
+    await expect(stageSelect).toHaveValue("DEVELOPMENT");
+    await expect(statusSelect).toHaveValue("OPEN");
+
+    // Development -> Complete moves to Staging, resets status to Open.
+    await statusSelect.selectOption("COMPLETE");
+    await page.waitForLoadState("networkidle");
+    await expect(stageSelect).toHaveValue("STAGING");
+    await expect(statusSelect).toHaveValue("OPEN");
+    await expect(page.getByText(/marked Development complete -- moved to Staging/)).toBeVisible();
+
+    // A reviewer can request changes without advancing anything.
+    await statusSelect.selectOption("CHANGES_REQUESTED");
+    await page.waitForLoadState("networkidle");
+    await expect(stageSelect).toHaveValue("STAGING");
+    await expect(statusSelect).toHaveValue("CHANGES_REQUESTED");
+
+    // Staging -> Complete moves to Production, resets status to Open.
+    await statusSelect.selectOption("COMPLETE");
+    await page.waitForLoadState("networkidle");
+    await expect(stageSelect).toHaveValue("PRODUCTION");
+    await expect(statusSelect).toHaveValue("OPEN");
+    await expect(page.getByText(/marked Staging complete -- moved to Production/)).toBeVisible();
+
+    // Production -> Complete has nowhere further to go -- stays Production/Complete.
+    await statusSelect.selectOption("COMPLETE");
+    await page.waitForLoadState("networkidle");
+    await expect(stageSelect).toHaveValue("PRODUCTION");
+    await expect(statusSelect).toHaveValue("COMPLETE");
+  });
 });

@@ -5,8 +5,10 @@ import { useRouter } from "next/navigation";
 import Badge from "@/components/Badge";
 import AttachmentUploader from "@/components/AttachmentUploader";
 import {
-  STATUS_LABELS,
-  STATUS_COLORS,
+  STAGE_LABELS,
+  STAGE_COLORS,
+  STAGE_STATUS_LABELS,
+  STAGE_STATUS_COLORS,
   PRIORITY_LABELS,
   PRIORITY_COLORS,
   TYPE_LABELS,
@@ -17,9 +19,8 @@ import {
   updateTaskQuote,
   toggleNextBuild,
   assignTask,
-  updateTaskStatus,
-  approveTask,
-  rejectTask,
+  setStage,
+  setStageStatus,
   reopenTask,
   closeTask,
   deleteTask,
@@ -28,7 +29,7 @@ import {
 } from "@/app/tasks/actions";
 import type { getVisibleTask, listActiveUsers, listAllAppAreas } from "@/lib/tasks";
 import type { SessionPayload } from "@/lib/jwt";
-import type { Priority, TaskType, Status } from "@prisma/client";
+import type { Priority, TaskType, Stage, StageStatus } from "@prisma/client";
 
 type Task = NonNullable<Awaited<ReturnType<typeof getVisibleTask>>>;
 type ActiveUser = Awaited<ReturnType<typeof listActiveUsers>>[number];
@@ -36,7 +37,8 @@ type AppAreaOption = Awaited<ReturnType<typeof listAllAppAreas>>[number];
 
 const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
 const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
-const STATUSES = Object.keys(STATUS_LABELS) as Status[];
+const STAGES = Object.keys(STAGE_LABELS) as Stage[];
+const STAGE_STATUSES = Object.keys(STAGE_STATUS_LABELS) as StageStatus[];
 
 function formatDate(d: Date | string | null): string {
   if (!d) return "";
@@ -44,7 +46,7 @@ function formatDate(d: Date | string | null): string {
 }
 
 function isOverdue(task: Task): boolean {
-  return !!task.dueDate && task.status !== "DONE" && new Date(task.dueDate) < new Date();
+  return !!task.dueDate && !task.closed && new Date(task.dueDate) < new Date();
 }
 
 export default function TaskDetail({
@@ -62,39 +64,16 @@ export default function TaskDetail({
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const [rejectNote, setRejectNote] = useState("");
-  const [showRejectBox, setShowRejectBox] = useState(false);
-  const [approveNote, setApproveNote] = useState("");
 
   const canEditFields = session.role === "ADMIN" || task.createdById === session.sub;
-  const isAssigneeOrAdmin = session.role === "ADMIN" || task.assigneeId === session.sub;
   const isApproverOrAdmin = session.role === "APPROVER" || session.role === "ADMIN";
   const isAdmin = session.role === "ADMIN";
   const isCreator = task.createdById === session.sub;
   const isAssignee = task.assigneeId === session.sub;
-  // Reopen/Close/Delete: available to the task's own creator or assignee,
-  // as well as APPROVER/ADMIN (who already have review authority over
-  // every task regardless of ownership).
+  // Delete stays restricted (destructive, permanent) -- everything else on
+  // this page (stage, status, close/reopen) is open to any logged-in user
+  // as of 2026-08-17, no ownership check.
   const isOwnerOrReviewer = isApproverOrAdmin || isCreator || isAssignee;
-
-  // Which statuses the plain dropdown may jump to from here. ADMIN has
-  // full authority over every task -- not bound by the step-by-step
-  // pipeline, so every status is open to them. Everyone else mirrors the
-  // server-side FORWARD_TRANSITIONS + role checks in actions.ts exactly:
-  // IN_REVIEW's and APPROVED's own exits are ADMIN-only, so non-admins get
-  // nothing from those two states here (empty set, falls through below) --
-  // STAGING_REVIEW's exits (approve/reject) stay their own dedicated flow
-  // since they carry a note; DONE is only reachable here via Close (its
-  // own button) for non-admins.
-  const enabledNextStatuses = isAdmin
-    ? new Set<Status>(STATUSES)
-    : new Set<Status>(
-        task.status === "OPEN" && isAssigneeOrAdmin
-          ? ["IN_PROGRESS"]
-          : task.status === "IN_PROGRESS" && isAssigneeOrAdmin
-            ? ["IN_REVIEW"]
-            : [],
-      );
 
   function run(fn: () => Promise<void>) {
     setError(null);
@@ -108,13 +87,18 @@ export default function TaskDetail({
     });
   }
 
-  function handleStatusSelect(next: Status) {
-    if (next === task.status || !enabledNextStatuses.has(next)) return;
-    run(() => updateTaskStatus(task.id, next));
+  function handleSetStage(next: Stage) {
+    if (next === task.stage) return;
+    run(() => setStage(task.id, next));
+  }
+
+  function handleSetStageStatus(next: StageStatus) {
+    if (next === task.stageStatus) return;
+    run(() => setStageStatus(task.id, next));
   }
 
   function handleClose() {
-    if (!window.confirm("Close this task and mark it Done? This skips any remaining review steps.")) return;
+    if (!window.confirm("Mark this task Closed?")) return;
     run(() => closeTask(task.id));
   }
 
@@ -249,7 +233,7 @@ export default function TaskDetail({
             <div className="flex flex-col gap-1">
               <label className="flex items-center gap-2 text-sm axiMed text-neutral-700">
                 <input type="checkbox" name="autoReviewed" defaultChecked={task.autoReviewed} />
-                Auto-reviewed (only visible to you)
+                yp-review1 (only visible to you)
               </label>
               <textarea
                 name="autoReviewNote"
@@ -286,10 +270,12 @@ export default function TaskDetail({
             <Badge label={task.appArea.name} className="bg-neutral-100 text-neutral-600" />
             <Badge label={TYPE_LABELS[task.type]} className={TYPE_COLORS[task.type]} />
             <Badge label={PRIORITY_LABELS[task.priority]} className={PRIORITY_COLORS[task.priority]} />
-            <Badge label={STATUS_LABELS[task.status]} className={STATUS_COLORS[task.status]} />
+            <Badge label={STAGE_LABELS[task.stage]} className={STAGE_COLORS[task.stage]} />
+            <Badge label={STAGE_STATUS_LABELS[task.stageStatus]} className={STAGE_STATUS_COLORS[task.stageStatus]} />
+            {task.closed && <Badge label="Closed" className="bg-neutral-800 text-white" />}
             {task.foundInProduction && <Badge label="Found in prod" className="bg-red-100 text-red-700" />}
             {isAdmin && task.autoReviewed && (
-              <Badge label="Auto-reviewed" className="bg-indigo-100 text-indigo-700" />
+              <Badge label="yp-review1" className="bg-indigo-100 text-indigo-700" />
             )}
             {isOverdue(task) && <Badge label="Overdue" className="bg-red-600 text-white" />}
             {task.dueDate && (
@@ -309,7 +295,7 @@ export default function TaskDetail({
           {isAdmin && task.autoReviewNote && (
             <div className="flex flex-col gap-1">
               <span className="text-xs axiMed text-neutral-400 uppercase tracking-wide">
-                Auto-review note
+                yp-review1 note
               </span>
               <p className="text-xs text-neutral-700 whitespace-pre-wrap bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
                 {task.autoReviewNote}
@@ -431,35 +417,49 @@ export default function TaskDetail({
         </div>
       )}
 
-      {/* Status transitions */}
+      {/* Stage / status -- free-form as of 2026-08-17: any logged-in user
+          can set either, on any task, to any value, at any time. */}
       <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-4">
-        <label className="text-sm text-neutral-500" htmlFor="statusSelect">
-          Status:
+        <label className="text-sm text-neutral-500" htmlFor="stageSelect">
+          Stage:
         </label>
         <select
-          id="statusSelect"
-          value={task.status}
+          id="stageSelect"
+          value={task.stage}
           disabled={isPending}
-          onChange={(e) => handleStatusSelect(e.target.value as Status)}
+          onChange={(e) => handleSetStage(e.target.value as Stage)}
           className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm"
         >
-          {STATUSES.map((s) => (
-            <option key={s} value={s} disabled={s !== task.status && !enabledNextStatuses.has(s)}>
-              {STATUS_LABELS[s]}
-            </option>
+          {STAGES.map((s) => (
+            <option key={s} value={s}>{STAGE_LABELS[s]}</option>
           ))}
         </select>
 
-        {isOwnerOrReviewer && task.status !== "DONE" && (
+        <label className="text-sm text-neutral-500" htmlFor="stageStatusSelect">
+          Status:
+        </label>
+        <select
+          id="stageStatusSelect"
+          value={task.stageStatus}
+          disabled={isPending}
+          onChange={(e) => handleSetStageStatus(e.target.value as StageStatus)}
+          className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm"
+        >
+          {STAGE_STATUSES.map((s) => (
+            <option key={s} value={s}>{STAGE_STATUS_LABELS[s]}</option>
+          ))}
+        </select>
+
+        {!task.closed && (
           <button
             disabled={isPending}
             onClick={handleClose}
             className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5 hover:border-brand transition-colors"
           >
-            Close
+            Mark Closed
           </button>
         )}
-        {isOwnerOrReviewer && task.status === "DONE" && (
+        {task.closed && (
           <button disabled={isPending} onClick={() => run(() => reopenTask(task.id))} className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5">
             Reopen
           </button>
@@ -474,48 +474,8 @@ export default function TaskDetail({
           </button>
         )}
 
-        {task.status === "STAGING_REVIEW" && isApproverOrAdmin && !showRejectBox && (
-          <>
-            <input
-              value={approveNote}
-              onChange={(e) => setApproveNote(e.target.value)}
-              placeholder="Optional note"
-              className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm flex-1 min-w-[140px]"
-            />
-            <button disabled={isPending} onClick={() => run(() => approveTask(task.id, approveNote))} className="axiMed text-sm bg-emerald-600 text-white rounded-lg px-3 py-1.5">
-              Approve
-            </button>
-            <button disabled={isPending} onClick={() => setShowRejectBox(true)} className="axiMed text-sm border border-red-300 text-red-600 rounded-lg px-3 py-1.5">
-              Reject
-            </button>
-          </>
-        )}
-        {task.status === "STAGING_REVIEW" && isApproverOrAdmin && showRejectBox && (
-          <div className="flex flex-col gap-2 w-full">
-            <textarea
-              value={rejectNote}
-              onChange={(e) => setRejectNote(e.target.value)}
-              placeholder="Note required -- what needs fixing?"
-              required
-              rows={2}
-              className="border border-red-300 rounded-lg px-2 py-1.5 text-sm"
-            />
-            <div className="flex gap-2">
-              <button
-                disabled={isPending || !rejectNote.trim()}
-                onClick={() => run(() => rejectTask(task.id, rejectNote))}
-                className="axiMed text-sm bg-red-600 text-white rounded-lg px-3 py-1.5 disabled:opacity-50"
-              >
-                Confirm Reject
-              </button>
-              <button onClick={() => setShowRejectBox(false)} className="text-sm text-neutral-500">
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
         {task.reviewNote && (
-          <p className="text-xs text-neutral-500 w-full">Last review note: {task.reviewNote}</p>
+          <p className="text-xs text-neutral-500 w-full">Last review note (legacy): {task.reviewNote}</p>
         )}
       </div>
 
@@ -535,7 +495,7 @@ export default function TaskDetail({
             <div className="flex items-center gap-2 text-xs">
               <span className="axiMed text-neutral-700">{c.author.name}</span>
               <span className="text-neutral-400">
-                {new Date(c.createdAt).toLocaleString()}
+                {new Date(c.createdAt).toLocaleString("en-US", { timeZone: "America/New_York" })}
               </span>
               {c.isPrivate && <Badge label="Private note" className="bg-amber-200 text-amber-800" />}
             </div>

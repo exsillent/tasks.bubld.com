@@ -25,12 +25,14 @@ export async function recordLoginAttempt(
   email: string,
   success: boolean,
   userId?: string,
+  ipAddress?: string,
 ): Promise<void> {
   await prisma.loginAttempt.create({
     data: {
       email: email.toLowerCase(),
       success,
       userId: userId ?? null,
+      ipAddress: ipAddress ?? null,
     },
   });
 }

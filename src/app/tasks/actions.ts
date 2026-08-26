@@ -7,7 +7,8 @@ import { requireSession, requireRole } from "@/lib/auth";
 import { getVisibleTask } from "@/lib/tasks";
 import { notifyByEmail } from "@/lib/notify";
 import { createUploadUrl, verifyUploadedObject } from "@/lib/storage";
-import type { Priority, TaskType, Status, Prisma } from "@prisma/client";
+import { logActivity } from "@/lib/activity";
+import type { Priority, TaskType, Stage, StageStatus, Prisma } from "@prisma/client";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -121,7 +122,7 @@ export async function createTask(
 
   const task = await prisma.$transaction(async (tx) => {
     const last = await tx.task.findFirst({ orderBy: { number: "desc" }, select: { number: true } });
-    return tx.task.create({
+    const created = await tx.task.create({
       data: {
         number: (last?.number ?? 0) + 1,
         title,
@@ -148,6 +149,16 @@ export async function createTask(
         },
       },
     });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "created",
+      taskId: created.id,
+      taskNumber: created.number,
+      taskTitle: created.title,
+      taskCreatedById: created.createdById,
+      taskAssigneeId: created.assigneeId,
+    });
+    return created;
   });
 
   if (assigneeId && assigneeId !== session.sub && !isDraft) {
@@ -196,28 +207,63 @@ export async function updateTaskFields(taskId: string, formData: FormData): Prom
   const appArea = await prisma.appArea.findUnique({ where: { id: appAreaId } });
   if (!appArea) throw new Error("Invalid app area.");
 
-  await prisma.task.update({
-    where: { id: task.id },
-    data: {
-      title,
-      description,
-      appAreaId,
-      priority,
-      type,
-      dueDate: dueDateRaw ? new Date(dueDateRaw) : null,
-      // Commits and the auto-review flag/note are Yasir's own, same as
-      // isPrivate comments -- only ever written by ADMIN, regardless of
-      // what a non-admin's form submits. Omitted entirely (not overwritten
-      // with null) for anyone else, so a non-admin editing other fields can
-      // never blank them out.
-      ...(session.role === "ADMIN"
-        ? {
-            commits: String(formData.get("commits") ?? "").trim() || null,
-            autoReviewed: formData.get("autoReviewed") === "on",
-            autoReviewNote: String(formData.get("autoReviewNote") ?? "").trim() || null,
-          }
-        : {}),
-    },
+  const newDueDate = dueDateRaw ? new Date(dueDateRaw) : null;
+  // Compared field-by-field (not just "something changed") so the activity
+  // log records exactly what moved, not just that an edit happened.
+  const fieldChanges: Array<{ field: string; oldValue: string | null; newValue: string | null }> = [];
+  if (task.title !== title) fieldChanges.push({ field: "title", oldValue: task.title, newValue: title });
+  if (task.description !== description) {
+    fieldChanges.push({ field: "description", oldValue: task.description, newValue: description });
+  }
+  if (task.appAreaId !== appAreaId) {
+    fieldChanges.push({ field: "appAreaId", oldValue: task.appAreaId, newValue: appAreaId });
+  }
+  if (task.priority !== priority) fieldChanges.push({ field: "priority", oldValue: task.priority, newValue: priority });
+  if (task.type !== type) fieldChanges.push({ field: "type", oldValue: task.type, newValue: type });
+  const oldDueDate = task.dueDate ? task.dueDate.toISOString() : null;
+  const newDueDateStr = newDueDate ? newDueDate.toISOString() : null;
+  if (oldDueDate !== newDueDateStr) {
+    fieldChanges.push({ field: "dueDate", oldValue: oldDueDate, newValue: newDueDateStr });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: task.id },
+      data: {
+        title,
+        description,
+        appAreaId,
+        priority,
+        type,
+        dueDate: newDueDate,
+        // Commits and the auto-review flag/note are Yasir's own, same as
+        // isPrivate comments -- only ever written by ADMIN, regardless of
+        // what a non-admin's form submits. Omitted entirely (not overwritten
+        // with null) for anyone else, so a non-admin editing other fields can
+        // never blank them out.
+        ...(session.role === "ADMIN"
+          ? {
+              commits: String(formData.get("commits") ?? "").trim() || null,
+              autoReviewed: formData.get("autoReviewed") === "on",
+              autoReviewNote: String(formData.get("autoReviewNote") ?? "").trim() || null,
+            }
+          : {}),
+      },
+    });
+    for (const change of fieldChanges) {
+      await logActivity(tx, {
+        actorId: session.sub,
+        action: "edited",
+        taskId: task.id,
+        taskNumber: task.number,
+        taskTitle: title,
+        taskCreatedById: task.createdById,
+        taskAssigneeId: task.assigneeId,
+        field: change.field,
+        oldValue: change.oldValue,
+        newValue: change.newValue,
+      });
+    }
   });
 
   revalidatePath(`/tasks/${taskId}`);
@@ -246,7 +292,21 @@ export async function updateTaskQuote(taskId: string, formData: FormData): Promi
   }
   const approvedBy = String(formData.get("approvedBy") ?? "").trim() || null;
 
-  await prisma.task.update({ where: { id: taskId }, data: { quotedHours, approvedBy } });
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({ where: { id: taskId }, data: { quotedHours, approvedBy } });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "quote_updated",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+      field: "quotedHours",
+      oldValue: task.quotedHours != null ? String(task.quotedHours) : null,
+      newValue: quotedHours != null ? String(quotedHours) : null,
+    });
+  });
 
   revalidatePath(`/tasks/${taskId}`);
   revalidatePath("/");
@@ -265,11 +325,20 @@ async function getOrCreateOpenBuild(tx: Prisma.TransactionClient) {
 }
 
 export async function toggleNextBuild(taskId: string, include: boolean): Promise<void> {
-  const { task } = await requireEditAccess(taskId);
+  const { session, task } = await requireEditAccess(taskId);
 
   await prisma.$transaction(async (tx) => {
     const buildId = include ? (await getOrCreateOpenBuild(tx)).id : null;
     await tx.task.update({ where: { id: task.id }, data: { buildId } });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: include ? "build_tagged" : "build_untagged",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+    });
   });
 
   revalidatePath(`/tasks/${taskId}`);
@@ -297,13 +366,31 @@ export async function assignTask(taskId: string, assigneeId: string | null): Pro
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
 
-  await prisma.task.update({ where: { id: taskId }, data: { assigneeId } });
+  const newAssignee = assigneeId ? await prisma.user.findUnique({ where: { id: assigneeId } }) : null;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({ where: { id: taskId }, data: { assigneeId } });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: assigneeId ? "assigned" : "unassigned",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      // Snapshot the new assignee, not the old one -- that's who this
+      // event is actually relevant to for the "since you were last here"
+      // digest going forward.
+      taskAssigneeId: assigneeId,
+      field: "assigneeId",
+      oldValue: task.assignee?.name ?? null,
+      newValue: newAssignee?.name ?? null,
+    });
+  });
 
   if (assigneeId && !task.isDraft) {
-    const assignee = await prisma.user.findUnique({ where: { id: assigneeId } });
-    if (assignee && assignee.emailNotificationsEnabled) {
+    if (newAssignee && newAssignee.emailNotificationsEnabled) {
       await notifyByEmail(
-        [assignee.email],
+        [newAssignee.email],
         `Task assigned to you: ${task.title}`,
         `${session.name} assigned you a task: "${task.title}"\n\n${APP_URL}/tasks/${taskId}`,
       );
@@ -315,135 +402,129 @@ export async function assignTask(taskId: string, assigneeId: string | null): Pro
 }
 
 // ---------------------------------------------------------------------------
-// Status transitions
+// Stage / status -- replaces the old linear pipeline (2026-08-17). Both axes
+// are free-form: any logged-in user can set either, on any task, to any
+// value, at any time -- no forced sequence, no approval gate. Each change
+// still posts a system comment so the history stays visible.
 // ---------------------------------------------------------------------------
 
-const FORWARD_TRANSITIONS: Record<Status, Status[]> = {
-  OPEN: ["IN_PROGRESS"],
-  IN_PROGRESS: ["IN_REVIEW"],
-  IN_REVIEW: ["STAGING_REVIEW", "IN_PROGRESS"],
-  STAGING_REVIEW: [], // only via approveTask/rejectTask below
-  APPROVED: ["DONE"],
-  DONE: [], // only via reopenTask below
+const STAGE_LABELS: Record<Stage, string> = {
+  DEVELOPMENT: "Development",
+  STAGING: "Staging",
+  PRODUCTION: "Production",
 };
 
-export async function updateTaskStatus(taskId: string, nextStatus: Status): Promise<void> {
+const STAGE_STATUS_LABELS: Record<StageStatus, string> = {
+  OPEN: "Open",
+  IN_PROGRESS: "In Progress",
+  CHANGES_REQUESTED: "Changes Requested",
+  COMPLETE: "Complete",
+};
+
+// Order Complete auto-advances through -- see setStageStatus below.
+const STAGE_ORDER: Stage[] = ["DEVELOPMENT", "STAGING", "PRODUCTION"];
+
+export async function setStage(taskId: string, stage: Stage): Promise<void> {
   const session = await requireSession();
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
+  if (task.stage === stage) return;
 
-  // ADMIN has full authority over every task -- not bound by the same
-  // step-by-step pipeline everyone else follows. Everyone else is still
-  // restricted to the normal forward transitions below.
-  if (session.role !== "ADMIN") {
-    const allowed = FORWARD_TRANSITIONS[task.status] ?? [];
-    if (!allowed.includes(nextStatus)) {
-      throw new Error(`Cannot move from ${task.status} to ${nextStatus}.`);
-    }
-
-    // OPEN->IN_PROGRESS and IN_PROGRESS->IN_REVIEW: only the assignee doing
-    // the work moves it forward.
-    if (
-      (task.status === "OPEN" || task.status === "IN_PROGRESS") &&
-      task.assigneeId !== session.sub
-    ) {
-      throw new Error("Only the assignee can move this task forward.");
-    }
-
-    // IN_REVIEW -> STAGING_REVIEW or back to IN_PROGRESS: Yasir's own
-    // review gate, ADMIN only (so any other role reaching here is denied).
-    if (task.status === "IN_REVIEW") {
-      throw new Error("Only an admin can move a task out of review.");
-    }
-
-    // APPROVED -> DONE: marking it actually deployed, ADMIN only.
-    if (task.status === "APPROVED") {
-      throw new Error("Only an admin can mark a task as deployed.");
-    }
-  }
-
-  await prisma.task.update({ where: { id: taskId }, data: { status: nextStatus } });
-  revalidatePath(`/tasks/${taskId}`);
-  revalidatePath("/");
-}
-
-// ---------------------------------------------------------------------------
-// Approve / Reject -- APPROVER or ADMIN only, from STAGING_REVIEW
-// ---------------------------------------------------------------------------
-
-export async function approveTask(taskId: string, note: string): Promise<void> {
-  const session = await requireRole("APPROVER", "ADMIN");
-  const task = await getVisibleTask(taskId, session);
-  if (!task) throw new Error("Task not found.");
-  if (task.status !== "STAGING_REVIEW") {
-    throw new Error("Only a task in staging review can be approved.");
-  }
-
-  await prisma.$transaction([
-    prisma.task.update({
-      where: { id: taskId },
-      data: { status: "APPROVED", reviewNote: note || null },
-    }),
-    prisma.comment.create({
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({ where: { id: taskId }, data: { stage } });
+    await tx.comment.create({
       data: {
         taskId,
         authorId: session.sub,
         isSystem: true,
-        body: note ? `Approved by ${session.name}: ${note}` : `Approved by ${session.name}.`,
+        body: `${session.name} moved this to ${STAGE_LABELS[stage]}.`,
       },
-    }),
-  ]);
-
-  await notifyTaskEvent(
-    taskId,
-    session.sub,
-    `Task approved: ${task.title}`,
-    `${session.name} approved "${task.title}".${note ? `\n\nNote: ${note}` : ""}`,
-  );
+    });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "stage_changed",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+      field: "stage",
+      oldValue: STAGE_LABELS[task.stage],
+      newValue: STAGE_LABELS[stage],
+    });
+  });
 
   revalidatePath(`/tasks/${taskId}`);
   revalidatePath("/");
 }
 
-export async function rejectTask(taskId: string, note: string): Promise<void> {
-  const session = await requireRole("APPROVER", "ADMIN");
-  if (!note.trim()) {
-    throw new Error("A note is required when rejecting a task.");
-  }
+export async function setStageStatus(taskId: string, stageStatus: StageStatus): Promise<void> {
+  const session = await requireSession();
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
-  if (task.status !== "STAGING_REVIEW") {
-    throw new Error("Only a task in staging review can be rejected.");
-  }
+  if (task.stageStatus === stageStatus) return;
 
-  await prisma.$transaction([
-    prisma.task.update({
+  // Marking Complete auto-advances to the next stage and resets status to
+  // Open there -- except from Production, which has nowhere further to go
+  // (Complete just stays Complete). This is a convenience default, not a
+  // gate: stage/stageStatus can still be set directly to anything, same as
+  // always -- see the comment above setStage/setStageStatus.
+  const currentIndex = STAGE_ORDER.indexOf(task.stage);
+  const advanceStage = stageStatus === "COMPLETE" && currentIndex < STAGE_ORDER.length - 1;
+  const nextStage = advanceStage ? STAGE_ORDER[currentIndex + 1] : task.stage;
+  const finalStageStatus = advanceStage ? "OPEN" : stageStatus;
+
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({
       where: { id: taskId },
-      data: { status: "IN_PROGRESS", reviewNote: note },
-    }),
-    prisma.comment.create({
-      data: {
-        taskId,
-        authorId: session.sub,
-        isSystem: true,
-        body: `Rejected by ${session.name}: ${note}`,
-      },
-    }),
-  ]);
+      data: { stage: nextStage, stageStatus: finalStageStatus },
+    });
 
-  await notifyTaskEvent(
-    taskId,
-    session.sub,
-    `Task rejected: ${task.title}`,
-    `${session.name} rejected "${task.title}".\n\nNote: ${note}`,
-  );
+    const commentBody = advanceStage
+      ? `${session.name} marked ${STAGE_LABELS[task.stage]} complete -- moved to ${STAGE_LABELS[nextStage]}.`
+      : `${session.name} set status to ${STAGE_STATUS_LABELS[stageStatus]}.`;
+
+    await tx.comment.create({
+      data: { taskId, authorId: session.sub, isSystem: true, body: commentBody },
+    });
+
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "stage_status_changed",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+      field: "stageStatus",
+      oldValue: STAGE_STATUS_LABELS[task.stageStatus],
+      newValue: STAGE_STATUS_LABELS[stageStatus],
+    });
+
+    if (advanceStage) {
+      await logActivity(tx, {
+        actorId: session.sub,
+        action: "stage_changed",
+        taskId: task.id,
+        taskNumber: task.number,
+        taskTitle: task.title,
+        taskCreatedById: task.createdById,
+        taskAssigneeId: task.assigneeId,
+        field: "stage",
+        oldValue: STAGE_LABELS[task.stage],
+        newValue: STAGE_LABELS[nextStage],
+      });
+    }
+  });
 
   revalidatePath(`/tasks/${taskId}`);
   revalidatePath("/");
 }
 
 // ---------------------------------------------------------------------------
-// Reopen -- APPROVER/ADMIN, or the task's own creator/assignee, from DONE
+// Close / Reopen -- manual, any logged-in user, from any stage/status at
+// any time (2026-08-17: closing is decoupled from stage/status entirely --
+// reaching Production/Complete does not auto-close a task).
 // ---------------------------------------------------------------------------
 
 function requireOwnerOrReviewer(
@@ -461,22 +542,30 @@ export async function reopenTask(taskId: string): Promise<void> {
   const session = await requireSession();
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
-  requireOwnerOrReviewer(session, task);
-  if (task.status !== "DONE") {
-    throw new Error("Only a done task can be reopened.");
+  if (!task.closed) {
+    throw new Error("Task is not closed.");
   }
 
-  await prisma.$transaction([
-    prisma.task.update({ where: { id: taskId }, data: { status: "IN_PROGRESS" } }),
-    prisma.comment.create({
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({ where: { id: taskId }, data: { closed: false, closedAt: null } });
+    await tx.comment.create({
       data: {
         taskId,
         authorId: session.sub,
         isSystem: true,
         body: `Reopened by ${session.name}.`,
       },
-    }),
-  ]);
+    });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "reopened",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+    });
+  });
 
   await notifyTaskEvent(
     taskId,
@@ -489,30 +578,37 @@ export async function reopenTask(taskId: string): Promise<void> {
   revalidatePath("/");
 }
 
-// ---------------------------------------------------------------------------
-// Close -- creator/assignee/ADMIN/APPROVER, from any status, straight to DONE
-// ---------------------------------------------------------------------------
-
 export async function closeTask(taskId: string): Promise<void> {
   const session = await requireSession();
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
-  requireOwnerOrReviewer(session, task);
-  if (task.status === "DONE") {
+  if (task.closed) {
     throw new Error("Task is already closed.");
   }
 
-  await prisma.$transaction([
-    prisma.task.update({ where: { id: taskId }, data: { status: "DONE" } }),
-    prisma.comment.create({
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({
+      where: { id: taskId },
+      data: { closed: true, closedAt: new Date() },
+    });
+    await tx.comment.create({
       data: {
         taskId,
         authorId: session.sub,
         isSystem: true,
         body: `Closed by ${session.name}.`,
       },
-    }),
-  ]);
+    });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "closed",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+    });
+  });
 
   await notifyTaskEvent(
     taskId,
@@ -537,7 +633,21 @@ export async function deleteTask(taskId: string): Promise<void> {
   if (!task) throw new Error("Task not found.");
   requireOwnerOrReviewer(session, task);
 
-  await prisma.task.delete({ where: { id: taskId } });
+  // Logged before the delete, in the same transaction -- ActivityLog.taskId
+  // has no FK/cascade, so this entry (with its snapshotted taskNumber/
+  // taskTitle) survives the task itself being gone.
+  await prisma.$transaction(async (tx) => {
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "deleted",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+    });
+    await tx.task.delete({ where: { id: taskId } });
+  });
 
   revalidatePath("/");
 }
@@ -552,7 +662,18 @@ export async function publishTask(taskId: string): Promise<void> {
   if (!task || task.createdById !== session.sub) {
     throw new Error("Task not found.");
   }
-  await prisma.task.update({ where: { id: taskId }, data: { isDraft: false } });
+  await prisma.$transaction(async (tx) => {
+    await tx.task.update({ where: { id: taskId }, data: { isDraft: false } });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "published",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+    });
+  });
   revalidatePath(`/tasks/${taskId}`);
   revalidatePath("/");
 }
@@ -577,20 +698,35 @@ export async function addComment(taskId: string, formData: FormData): Promise<vo
     await verifyUploadedObject(a.key);
   }
 
-  await prisma.comment.create({
-    data: {
-      taskId,
-      authorId: session.sub,
-      body,
-      isPrivate,
-      attachments: {
-        create: pendingAttachments.map((a) => ({
-          key: a.key,
-          filename: a.filename,
-          uploadedById: session.sub,
-        })),
+  await prisma.$transaction(async (tx) => {
+    await tx.comment.create({
+      data: {
+        taskId,
+        authorId: session.sub,
+        body,
+        isPrivate,
+        attachments: {
+          create: pendingAttachments.map((a) => ({
+            key: a.key,
+            filename: a.filename,
+            uploadedById: session.sub,
+          })),
+        },
       },
-    },
+    });
+    await logActivity(tx, {
+      actorId: session.sub,
+      action: "commented",
+      taskId: task.id,
+      taskNumber: task.number,
+      taskTitle: task.title,
+      taskCreatedById: task.createdById,
+      taskAssigneeId: task.assigneeId,
+      // Preview only, not the full body -- the activity feed links back to
+      // the task for the real thing, this is just enough to scan a list.
+      newValue: body.length > 140 ? `${body.slice(0, 140)}...` : body,
+      isPrivate,
+    });
   });
 
   // Private notes are Yasir's own -- never trigger a notification to
