@@ -41,6 +41,13 @@ jobs:
         # without this, before ever reaching the real typecheck.
         run: npx prisma generate
 
+      - name: Generate Next.js route types
+        # tsconfig.json includes .next/types/**/*.ts (LayoutProps and
+        # friends) -- that directory only exists after next build/dev has
+        # run at least once. `next typegen` produces it without a full
+        # build, confirmed via a genuinely fresh clone, not just locally.
+        run: npx next typegen
+
       - name: Typecheck
         run: npx tsc --noEmit
 
