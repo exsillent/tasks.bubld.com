@@ -181,17 +181,13 @@ export default function TaskDashboard({
   const counts = useMemo(() => {
     // Stage/status counts reflect what you'd actually see by default (closed
     // tasks excluded) -- so a badge's number always matches its own list
-    // once clicked, unless "+ Closed" is also checked.
-    //
-    // Stage is the first filter layer: Status's counts (and by extension
-    // its options) are scoped to the currently selected Stage, if any --
-    // picking Staging then looking at Status should only ever reflect
-    // Staging tasks, not the whole board.
+    // once clicked, unless "+ Closed" is also checked. Both stage and
+    // matrix are unscoped totals (not narrowed by the other axis's current
+    // filter) -- the grid's row/column headers clear the other axis on
+    // click, so their displayed counts need to match what clicking shows.
     const stage: Record<Stage, number> = { DEVELOPMENT: 0, STAGING: 0, PRODUCTION: 0 };
-    const stageStatus: Record<StageStatus, number> = { OPEN: 0, IN_PROGRESS: 0, CHANGES_REQUESTED: 0, COMPLETE: 0 };
-    // Full Stage x StageStatus cross-tab, independent of the current stage/
-    // status filters (unlike stageStatus above) -- this is what answers
-    // "what's where, right now" at a glance instead of one axis at a time.
+    // Full Stage x StageStatus cross-tab -- this is what answers "what's
+    // where, right now" at a glance instead of one axis at a time.
     const matrix: Record<Stage, Record<StageStatus, number>> = {
       DEVELOPMENT: { OPEN: 0, IN_PROGRESS: 0, CHANGES_REQUESTED: 0, COMPLETE: 0 },
       STAGING: { OPEN: 0, IN_PROGRESS: 0, CHANGES_REQUESTED: 0, COMPLETE: 0 },
@@ -205,16 +201,13 @@ export default function TaskDashboard({
         closedCount++;
       } else {
         stage[t.stage]++;
-        if (!stageFilter || t.stage === stageFilter) {
-          stageStatus[t.stageStatus]++;
-        }
         matrix[t.stage][t.stageStatus]++;
       }
       if (t.foundInProduction) prodCount++;
       if (t.autoReviewed) autoReviewedCount++;
     }
-    return { stage, stageStatus, matrix, closedCount, prodCount, autoReviewedCount };
-  }, [tasks, stageFilter]);
+    return { stage, matrix, closedCount, prodCount, autoReviewedCount };
+  }, [tasks]);
 
   const filtered = useMemo(() => {
     const q = searchInput.trim().toLowerCase();
@@ -297,11 +290,10 @@ export default function TaskDashboard({
 
   return (
     <div className="flex flex-col gap-5">
-      {/* Stage x Status at a glance -- the two strips below let you filter
-          one axis at a time, but with both independent (no gating between
-          them) there's no way to see the full picture from either alone.
-          This grid answers "what's where, right now" in one look; each cell
-          jumps straight to that exact stage+status combination. */}
+      {/* Stage x Status, single control. Row/column headers filter one axis
+          (same job the old two separate strips did); cells filter both at
+          once. One place to both see the whole picture and act on it,
+          instead of three overlapping ones. */}
       <div className="rounded-xl border border-neutral-200 overflow-x-auto">
         <table className="w-full text-sm border-collapse">
           <thead>
@@ -309,21 +301,52 @@ export default function TaskDashboard({
               <th className="text-left px-3 py-2 text-xs text-neutral-400 uppercase tracking-wide bg-neutral-50 border-b border-neutral-200">
                 Stage \ Status
               </th>
-              {ALL_STAGE_STATUSES.map((st) => (
-                <th
-                  key={st}
-                  className="text-center px-3 py-2 text-xs text-neutral-400 uppercase tracking-wide bg-neutral-50 border-b border-neutral-200"
-                >
-                  {STAGE_STATUS_LABELS[st]}
-                </th>
-              ))}
+              {ALL_STAGE_STATUSES.map((st) => {
+                // Unscoped total (all stages), not counts.stageStatus[st] --
+                // that one is intentionally narrowed to the active stage
+                // filter (see its own comment), but this header clears the
+                // stage filter on click, so its count needs to match what
+                // clicking it will actually show.
+                const total = ALL_STAGES.reduce((sum, s) => sum + counts.matrix[s][st], 0);
+                return (
+                  <th key={st} className="p-1 bg-neutral-50 border-b border-neutral-200">
+                    <button
+                      onClick={() =>
+                        setParams(
+                          stageStatusFilter === st && !stageFilter
+                            ? { status: null }
+                            : { status: st, stage: null }
+                        )
+                      }
+                      className={`w-full rounded-lg px-3 py-1.5 text-xs uppercase tracking-wide transition-colors ${STAGE_STATUS_COLORS[st]} ${
+                        stageStatusFilter === st ? "ring-2 ring-brand ring-inset" : "opacity-70 hover:opacity-100"
+                      }`}
+                    >
+                      {STAGE_STATUS_LABELS[st]} ({total})
+                    </button>
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
             {ALL_STAGES.map((s) => (
               <tr key={s} className="border-t border-neutral-100 first:border-t-0">
-                <th className="text-left px-3 py-2 axiMed text-neutral-700 bg-neutral-50">
-                  {STAGE_LABELS[s]}
+                <th className="p-1 bg-neutral-50">
+                  <button
+                    onClick={() =>
+                      setParams(
+                        stageFilter === s && !stageStatusFilter
+                          ? { stage: null }
+                          : { stage: s, status: null }
+                      )
+                    }
+                    className={`w-full text-left rounded-lg px-3 py-1.5 text-sm transition-colors ${STAGE_COLORS[s]} ${
+                      stageFilter === s ? "ring-2 ring-brand ring-inset" : "opacity-70 hover:opacity-100"
+                    }`}
+                  >
+                    {STAGE_LABELS[s]} ({counts.stage[s]})
+                  </button>
                 </th>
                 {ALL_STAGE_STATUSES.map((st) => {
                   const count = counts.matrix[s][st];
@@ -350,58 +373,27 @@ export default function TaskDashboard({
             ))}
           </tbody>
         </table>
-      </div>
-
-      {/* Stage and status -- two independent clickable strips, combine freely */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5">
-        <span className="axiBold text-xs text-neutral-400 uppercase tracking-wide mr-1">
-          Stage
-        </span>
-        {ALL_STAGES.map((s) => (
-          <button
-            key={s}
-            onClick={() => setParams({ stage: stageFilter === s ? null : s })}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors bg-white ${
-              stageFilter === s
-                ? "border-brand bg-brand/5"
-                : "border-neutral-200 hover:border-neutral-300"
-            }`}
-          >
-            <span className="axiMed">{counts.stage[s]}</span>
-            <span className="text-neutral-500">{STAGE_LABELS[s]}</span>
-          </button>
-        ))}
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2.5">
-        <span className="axiBold text-xs text-neutral-400 uppercase tracking-wide mr-1">
-          Status
-        </span>
-        {ALL_STAGE_STATUSES.map((s) => (
-          <button
-            key={s}
-            onClick={() => setParams({ status: stageStatusFilter === s ? null : s })}
-            className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm transition-colors bg-white ${
-              stageStatusFilter === s
-                ? "border-brand bg-brand/5"
-                : "border-neutral-200 hover:border-neutral-300"
-            }`}
-          >
-            <span className="axiMed">{counts.stageStatus[s]}</span>
-            <span className="text-neutral-500">{STAGE_STATUS_LABELS[s]}</span>
-          </button>
-        ))}
-        <label className="flex items-center gap-1.5 text-sm ml-1 text-neutral-600">
-          <input
-            type="checkbox"
-            checked={includeClosed}
-            onChange={(e) => {
-              setIncludeClosed(e.target.checked);
-              setParams({ closed: e.target.checked ? "1" : null });
-            }}
-          />
-          + Closed ({counts.closedCount})
-        </label>
+        <div className="flex items-center justify-between px-3 py-2 border-t border-neutral-100">
+          <label className="flex items-center gap-1.5 text-sm text-neutral-600">
+            <input
+              type="checkbox"
+              checked={includeClosed}
+              onChange={(e) => {
+                setIncludeClosed(e.target.checked);
+                setParams({ closed: e.target.checked ? "1" : null });
+              }}
+            />
+            + Closed ({counts.closedCount})
+          </label>
+          {(stageFilter || stageStatusFilter) && (
+            <button
+              onClick={() => setParams({ stage: null, status: null })}
+              className="text-sm text-neutral-400 hover:text-neutral-700"
+            >
+              Clear stage/status
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">
