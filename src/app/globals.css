@@ -1,44 +1,143 @@
 @import "tailwindcss";
 
+/* ============================================================
+   Bubld Tasks design tokens (2026-08-27 rebuild)
+   Light only -- dark mode was removed on purpose and isn't wanted.
+   ============================================================ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Surfaces & lines -- warm-tinted neutrals, not flat grey */
+  --bg: #fbfaf9;
+  --surface: #ffffff;
+  --surface-2: #f4f2ef;
+  --surface-3: #ece9e4;
+  --border: #e5e1db;
+  --border-strong: #d3cec5;
+
+  /* Text -- every step passes AA on --surface */
+  --fg: #1f1c19;
+  --fg-muted: #5c574f;
+  --fg-subtle: #857f74;
+
+  /* Brand */
   --brand: #ff7200;
+  --brand-hover: #e85f00;
+  --brand-wash: #fff2e7;
+  --brand-fg: #ffffff;
+  --brand-ink: #b5480a; /* brand as readable text on light surfaces */
+
+  /* Semantic -- distinct from the brand accent */
+  --danger: #c23934;
+  --danger-wash: #fbeae8;
+  --danger-ink: #a52c28;
+  --warning: #b06a12;
+  --warning-wash: #fbf0e2;
+  --success: #2f7d57;
+  --success-wash: #e7f2ec;
+  --success-ink: #276847;
+  --info: #2f68b0;
+  --info-wash: #e9f0fa;
+
+  /* Pipeline column accents (used as thin markers, not fills) */
+  --pipe-backlog: #9a938a;
+  --pipe-progress: #2f68b0;
+  --pipe-review: #b06a12;
+  --pipe-deploy: #7b52c7;
+  --pipe-deployed: #2f7d57;
+
+  --radius: 0.625rem;
+  --radius-sm: 0.4rem;
+  --radius-lg: 0.9rem;
+  --shadow-sm: 0 1px 2px rgba(31, 24, 16, 0.05);
+  --shadow: 0 1px 3px rgba(31, 24, 16, 0.06), 0 6px 16px -8px rgba(31, 24, 16, 0.12);
+  --shadow-lg: 0 12px 40px -12px rgba(31, 24, 16, 0.22);
+
+  --font-sans: "Axiforma", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
   --color-brand: var(--brand);
-  --font-sans: "AxiformaRegular", sans-serif;
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-wash: var(--brand-wash);
+  --color-brand-ink: var(--brand-ink);
+  --color-danger: var(--danger);
+  --color-danger-wash: var(--danger-wash);
+  --color-danger-ink: var(--danger-ink);
+  --color-warning: var(--warning);
+  --color-warning-wash: var(--warning-wash);
+  --color-success: var(--success);
+  --color-success-wash: var(--success-wash);
+  --color-success-ink: var(--success-ink);
+  --color-info: var(--info);
+  --color-info-wash: var(--info-wash);
+
+  --radius-card: var(--radius);
+
+  --font-sans: var(--font-sans);
+
+  /* legacy alias -- old screens still reference these */
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
 }
 
+/* ---------- Axiforma, mapped to real font-weights ---------- */
 @font-face {
-  font-family: "AxiformaBold";
-  src: url(/fonts/Axiforma-Bold.ttf) format("truetype");
-  font-display: swap;
-}
-@font-face {
-  font-family: "AxiformaMedium";
-  src: url(/fonts/Axiforma-Medium.ttf) format("truetype");
-  font-display: swap;
-}
-@font-face {
-  font-family: "AxiformaRegular";
+  font-family: "Axiforma";
   src: url(/fonts/Axiforma-Regular.ttf) format("truetype");
+  font-weight: 400;
   font-display: swap;
 }
+@font-face {
+  font-family: "Axiforma";
+  src: url(/fonts/Axiforma-Medium.ttf) format("truetype");
+  font-weight: 500;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Axiforma";
+  src: url(/fonts/Axiforma-Bold.ttf) format("truetype");
+  font-weight: 700;
+  font-display: swap;
+}
+/* Back-compat aliases for screens not yet rebuilt -- now just weights on
+   the one Axiforma family, removed in the final cleanup pass. */
 .axiMed {
-  font-family: "AxiformaMedium";
+  font-weight: 500;
 }
 .axiBold {
-  font-family: "AxiformaBold";
+  font-weight: 700;
+}
+
+* {
+  border-color: var(--border);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: "AxiformaRegular", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 0.9375rem;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.011em;
+  text-wrap: balance;
 }
 
 a,
@@ -46,18 +145,26 @@ button {
   cursor: pointer;
 }
 
-::-webkit-scrollbar:horizontal {
-  height: 6px;
-}
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background-color: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background-color: var(--brand);
-  border-radius: 1rem;
+  background-color: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--fg-subtle);
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+  border-radius: 3px;
 }
 
 @keyframes fadeIn {
@@ -68,7 +175,6 @@ button {
     opacity: 1;
   }
 }
-
 @keyframes slideIn {
   from {
     transform: translateX(100%);
@@ -77,10 +183,48 @@ button {
     transform: translateX(0);
   }
 }
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes overlayIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialogIn {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-\[fadeIn_150ms_ease-out\],
-  .animate-\[slideIn_200ms_ease-out\] {
-    animation: none !important;
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
   }
 }
