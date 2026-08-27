@@ -57,6 +57,16 @@ export const RELEASE_MODE_LABELS: Record<ReleaseMode, string> = {
   BUILD: "App build — batched into a numbered build",
 };
 
+export function nextPipeline(p: Pipeline): Pipeline | null {
+  const i = PIPELINE_ORDER.indexOf(p);
+  return i >= 0 && i < PIPELINE_ORDER.length - 1 ? PIPELINE_ORDER[i + 1] : null;
+}
+
+export function prevPipeline(p: Pipeline): Pipeline | null {
+  const i = PIPELINE_ORDER.indexOf(p);
+  return i > 0 ? PIPELINE_ORDER[i - 1] : null;
+}
+
 // Legacy, read-only -- only ever shown on tasks created before 2026-08-17
 // that still carry their old single-track status. No longer written.
 export const STATUS_LABELS: Record<Status, string> = {

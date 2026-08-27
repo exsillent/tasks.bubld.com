@@ -33,6 +33,18 @@ export function describeActivity(entry: ActivityEntry): string {
       return `assigned ${ref} to ${entry.newValue}`;
     case "unassigned":
       return `unassigned ${ref}${entry.oldValue ? ` (was ${entry.oldValue})` : ""}`;
+    case "moved":
+      return `moved ${ref} to ${entry.newValue}`;
+    case "approved":
+      return `approved ${ref}`;
+    case "sent_back":
+      return `sent ${ref} back for changes`;
+    case "deployed":
+      return `marked ${ref} deployed`;
+    case "archived":
+      return `archived ${ref}`;
+    case "unarchived":
+      return `brought ${ref} back`;
     case "stage_changed":
       return `moved ${ref} to ${entry.newValue}`;
     case "stage_status_changed":

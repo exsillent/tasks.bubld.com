@@ -2,34 +2,40 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import Badge from "@/components/Badge";
+import Avatar from "@/components/ui/Avatar";
+import Badge from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { useToast } from "@/components/ui/Toast";
+import { useConfirm } from "@/components/ui/useConfirm";
 import AttachmentUploader from "@/components/AttachmentUploader";
 import {
-  STAGE_LABELS,
-  STAGE_COLORS,
-  STAGE_STATUS_LABELS,
-  STAGE_STATUS_COLORS,
+  PIPELINE_ORDER,
+  PIPELINE_LABELS,
+  PIPELINE_MARKER,
+  PIPELINE_HINTS,
   PRIORITY_LABELS,
-  PRIORITY_COLORS,
   TYPE_LABELS,
-  TYPE_COLORS,
 } from "@/lib/labels";
 import {
   updateTaskFields,
   updateTaskQuote,
   toggleNextBuild,
   assignTask,
-  setStage,
-  setStageStatus,
-  reopenTask,
-  closeTask,
+  setPipeline,
+  startTask,
+  sendForReview,
+  approveTask,
+  sendBack,
+  markDeployed,
+  archiveTask,
+  unarchiveTask,
   deleteTask,
   publishTask,
   addComment,
 } from "@/app/tasks/actions";
 import type { getVisibleTask, listActiveUsers, listAllAppAreas } from "@/lib/tasks";
 import type { SessionPayload } from "@/lib/jwt";
-import type { Priority, TaskType, Stage, StageStatus } from "@prisma/client";
+import type { Priority, TaskType } from "@prisma/client";
 
 type Task = NonNullable<Awaited<ReturnType<typeof getVisibleTask>>>;
 type ActiveUser = Awaited<ReturnType<typeof listActiveUsers>>[number];
@@ -37,17 +43,17 @@ type AppAreaOption = Awaited<ReturnType<typeof listAllAppAreas>>[number];
 
 const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
 const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
-const STAGES = Object.keys(STAGE_LABELS) as Stage[];
-const STAGE_STATUSES = Object.keys(STAGE_STATUS_LABELS) as StageStatus[];
 
 function formatDate(d: Date | string | null): string {
   if (!d) return "";
   return new Date(d).toISOString().slice(0, 10);
 }
-
 function isOverdue(task: Task): boolean {
-  return !!task.dueDate && !task.closed && new Date(task.dueDate) < new Date();
+  return !!task.dueDate && !task.archived && new Date(task.dueDate) < new Date();
 }
+
+const field =
+  "rounded-[var(--radius-sm)] border border-border-strong bg-surface px-2.5 py-1.5 text-sm outline-none focus:border-brand";
 
 export default function TaskDetail({
   task,
@@ -61,243 +67,206 @@ export default function TaskDetail({
   session: SessionPayload;
 }) {
   const router = useRouter();
+  const { toast } = useToast();
+  const { confirm, dialog } = useConfirm();
   const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [sendBackOpen, setSendBackOpen] = useState(false);
+  const [approveNoteOpen, setApproveNoteOpen] = useState(false);
 
-  const canEditFields = session.role === "ADMIN" || task.createdById === session.sub;
-  const isApproverOrAdmin = session.role === "APPROVER" || session.role === "ADMIN";
   const isAdmin = session.role === "ADMIN";
+  const isReviewer = session.role === "ADMIN" || session.role === "APPROVER";
   const isCreator = task.createdById === session.sub;
   const isAssignee = task.assigneeId === session.sub;
-  // Delete stays restricted (destructive, permanent) -- everything else on
-  // this page (stage, status, close/reopen) is open to any logged-in user
-  // as of 2026-08-17, no ownership check.
-  const isOwnerOrReviewer = isApproverOrAdmin || isCreator || isAssignee;
+  const canEditFields = isAdmin || isCreator;
+  const canDelete = isReviewer || isCreator || isAssignee;
+  const isBuildArea = task.appArea.releaseMode === "BUILD";
+  const inOpenBuild = !!task.build && !task.build.shippedAt;
 
-  function run(fn: () => Promise<void>) {
-    setError(null);
+  function run(fn: () => Promise<unknown>, msg?: string) {
     startTransition(async () => {
       try {
         await fn();
         router.refresh();
+        if (msg) toast(msg, "success");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Something went wrong.");
+        toast(err instanceof Error ? err.message : "Something went wrong.", "danger");
       }
     });
   }
 
-  function handleSetStage(next: Stage) {
-    if (next === task.stage) return;
-    run(() => setStage(task.id, next));
-  }
-
-  function handleSetStageStatus(next: StageStatus) {
-    if (next === task.stageStatus) return;
-    run(() => setStageStatus(task.id, next));
-  }
-
-  function handleClose() {
-    if (!window.confirm("Mark this task Closed?")) return;
-    run(() => closeTask(task.id));
-  }
-
-  function handleDelete() {
-    if (!window.confirm("Delete this task permanently? This cannot be undone.")) return;
-    setError(null);
+  async function handleDelete() {
+    if (
+      !(await confirm({
+        title: "Delete this task?",
+        body: "This is permanent and removes its comments and attachments.",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    )
+      return;
     startTransition(async () => {
       try {
         await deleteTask(task.id);
         router.push("/");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Delete failed.");
+        toast(err instanceof Error ? err.message : "Delete failed.", "danger");
       }
     });
   }
 
-  async function handleFieldSave(formData: FormData) {
-    setError(null);
+  function submitFields(formData: FormData) {
     startTransition(async () => {
       try {
         await updateTaskFields(task.id, formData);
         setEditing(false);
         router.refresh();
+        toast("Saved.", "success");
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Save failed.");
+        toast(err instanceof Error ? err.message : "Save failed.", "danger");
       }
     });
   }
-
-  async function handleQuoteSave(formData: FormData) {
-    setError(null);
-    startTransition(async () => {
-      try {
-        await updateTaskQuote(task.id, formData);
-        router.refresh();
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Save failed.");
-      }
-    });
+  function submitQuote(formData: FormData) {
+    run(() => updateTaskQuote(task.id, formData), "Quote saved.");
   }
-
-  async function handleComment(formData: FormData) {
-    setError(null);
+  function submitComment(formData: FormData) {
     startTransition(async () => {
       try {
         await addComment(task.id, formData);
         router.refresh();
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Comment failed.");
+        toast(err instanceof Error ? err.message : "Comment failed.", "danger");
+      }
+    });
+  }
+  function submitSendBack(formData: FormData) {
+    const comment = String(formData.get("comment") ?? "");
+    startTransition(async () => {
+      try {
+        await sendBack(task.id, comment);
+        setSendBackOpen(false);
+        router.refresh();
+        toast("Sent back for changes.", "success");
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "Failed.", "danger");
+      }
+    });
+  }
+  function submitApprove(formData: FormData) {
+    const note = String(formData.get("note") ?? "");
+    startTransition(async () => {
+      try {
+        await approveTask(task.id, note);
+        setApproveNoteOpen(false);
+        router.refresh();
+        toast("Approved.", "success");
+      } catch (err) {
+        toast(err instanceof Error ? err.message : "Failed.", "danger");
       }
     });
   }
 
   return (
     <div className="flex flex-col gap-6">
-      {error && (
-        <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2" role="alert">
-          {error}
-        </p>
-      )}
+      {dialog}
 
       {task.isDraft && (
-        <div className="flex items-center justify-between bg-neutral-800 text-white rounded-lg px-3 py-2 text-sm">
-          <span>Draft -- only visible to you.</span>
+        <div className="flex items-center justify-between rounded-[var(--radius-sm)] bg-fg px-3 py-2 text-sm text-bg">
+          <span>Draft — only you can see this.</span>
           {isCreator && isAdmin && (
-            <button
-              disabled={isPending}
-              onClick={() => run(() => publishTask(task.id))}
-              className="axiMed underline"
-            >
+            <button className="font-medium underline" disabled={isPending} onClick={() => run(() => publishTask(task.id), "Published.")}>
               Publish
             </button>
           )}
         </div>
       )}
 
-      {/* Fields */}
+      {/* Title + fields */}
       {editing ? (
-        <form action={handleFieldSave} className="flex flex-col gap-3">
-          <input
-            name="title"
-            defaultValue={task.title}
-            required
-            className="border border-neutral-300 rounded-lg px-3 py-2 text-lg axiBold outline-none focus:border-brand"
-          />
-          <textarea
-            name="description"
-            defaultValue={task.description}
-            required
-            rows={4}
-            className="border border-neutral-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand"
-          />
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <select name="appAreaId" defaultValue={task.appAreaId} className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+        <form action={submitFields} className="flex flex-col gap-3">
+          <input name="title" defaultValue={task.title} required className={`${field} text-lg font-bold`} />
+          <textarea name="description" defaultValue={task.description} required rows={4} className={`${field} text-sm`} />
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <select name="appAreaId" defaultValue={task.appAreaId} className={field}>
               {appAreas.map((a) => (
                 <option key={a.id} value={a.id}>{a.name}</option>
               ))}
             </select>
-            <select name="type" defaultValue={task.type} className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+            <select name="type" defaultValue={task.type} className={field}>
               {TYPES.map((t) => (
                 <option key={t} value={t}>{TYPE_LABELS[t]}</option>
               ))}
             </select>
-            <select name="priority" defaultValue={task.priority} className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm">
+            <select name="priority" defaultValue={task.priority} className={field}>
               {PRIORITIES.map((p) => (
                 <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
               ))}
             </select>
-            <input
-              type="date"
-              name="dueDate"
-              defaultValue={formatDate(task.dueDate)}
-              className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm"
-            />
+            <input type="date" name="dueDate" defaultValue={formatDate(task.dueDate)} className={field} />
           </div>
           {isAdmin && (
             <div className="flex flex-col gap-1">
-              <label htmlFor="commits" className="text-sm axiMed text-neutral-700">
-                Commits (only visible to you -- one per line, e.g. &quot;repo: hash -- what it did&quot;)
+              <label htmlFor="commits" className="text-sm font-medium text-fg-muted">
+                Commits (only you see this — one per line)
               </label>
-              <textarea
-                id="commits"
-                name="commits"
-                defaultValue={task.commits ?? ""}
-                rows={3}
-                placeholder={"carwash_node_backend: d0036c51 -- fixed the rounding bug"}
-                className="border border-neutral-300 rounded-lg px-3 py-2 text-sm font-mono outline-none focus:border-brand"
-              />
+              <textarea id="commits" name="commits" defaultValue={task.commits ?? ""} rows={3}
+                placeholder="carwash_node_backend: d0036c51 -- fixed the rounding bug"
+                className={`${field} font-mono text-xs`} />
             </div>
           )}
           {isAdmin && (
             <div className="flex flex-col gap-1">
-              <label className="flex items-center gap-2 text-sm axiMed text-neutral-700">
+              <label className="flex items-center gap-2 text-sm font-medium text-fg-muted">
                 <input type="checkbox" name="autoReviewed" defaultChecked={task.autoReviewed} />
-                yp-review1 (only visible to you)
+                Flagged for your review (only you see this)
               </label>
-              <textarea
-                name="autoReviewNote"
-                defaultValue={task.autoReviewNote ?? ""}
-                rows={4}
-                placeholder="What did you check, and what did you find?"
-                className="border border-neutral-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand"
-              />
+              <textarea name="autoReviewNote" defaultValue={task.autoReviewNote ?? ""} rows={3}
+                placeholder="What did you check, and what did you find?" className={`${field} text-sm`} />
             </div>
           )}
           <div className="flex gap-2">
-            <button type="submit" disabled={isPending} className="axiMed bg-brand text-white rounded-lg px-4 py-1.5 text-sm">
-              Save
-            </button>
-            <button type="button" onClick={() => setEditing(false)} className="text-sm text-neutral-500">
-              Cancel
-            </button>
+            <Button type="submit" variant="primary" size="sm" disabled={isPending}>Save</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
           </div>
         </form>
       ) : (
         <div className="flex flex-col gap-3">
           <div className="flex items-start justify-between gap-3">
-            <h1 className="axiBold text-xl text-neutral-900">
-              <span className="text-neutral-400 font-normal">#{task.number}</span> {task.title}
+            <h1 className="text-xl font-bold text-fg">
+              <span className="font-normal text-fg-subtle">#{task.number}</span> {task.title}
             </h1>
             {canEditFields && (
-              <button onClick={() => setEditing(true)} className="text-sm text-neutral-400 hover:text-neutral-700 shrink-0">
+              <button onClick={() => setEditing(true)} className="shrink-0 text-sm text-fg-subtle hover:text-fg">
                 Edit
               </button>
             )}
           </div>
-          <p className="text-sm text-neutral-600 whitespace-pre-wrap">{task.description}</p>
-          <div className="flex flex-wrap gap-2">
-            <Badge label={task.appArea.name} className="bg-neutral-100 text-neutral-600" />
-            <Badge label={TYPE_LABELS[task.type]} className={TYPE_COLORS[task.type]} />
-            <Badge label={PRIORITY_LABELS[task.priority]} className={PRIORITY_COLORS[task.priority]} />
-            <Badge label={STAGE_LABELS[task.stage]} className={STAGE_COLORS[task.stage]} />
-            <Badge label={STAGE_STATUS_LABELS[task.stageStatus]} className={STAGE_STATUS_COLORS[task.stageStatus]} />
-            {task.closed && <Badge label="Closed" className="bg-neutral-800 text-white" />}
-            {task.foundInProduction && <Badge label="Found in prod" className="bg-red-100 text-red-700" />}
-            {isAdmin && task.autoReviewed && (
-              <Badge label="yp-review1" className="bg-indigo-100 text-indigo-700" />
-            )}
-            {isOverdue(task) && <Badge label="Overdue" className="bg-red-600 text-white" />}
-            {task.dueDate && (
-              <span className="text-xs text-neutral-400 self-center">Due {formatDate(task.dueDate)}</span>
-            )}
+          <p className="whitespace-pre-wrap text-sm text-fg-muted">{task.description}</p>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge tone="neutral">{task.appArea.name}</Badge>
+            <Badge tone={task.type === "ERROR" ? "danger" : task.type === "IDEA" ? "purple" : "brand"}>
+              {TYPE_LABELS[task.type]}
+            </Badge>
+            <Badge tone={task.priority === "CRITICAL" ? "danger" : task.priority === "HIGH" ? "warning" : "info"}>
+              {PRIORITY_LABELS[task.priority]}
+            </Badge>
+            {task.foundInProduction && <Badge tone="danger">Found in prod</Badge>}
+            {isOverdue(task) && <Badge tone="danger">Overdue</Badge>}
+            {task.dueDate && <span className="text-xs text-fg-subtle">Due {formatDate(task.dueDate)}</span>}
           </div>
           {task.commits && (
             <div className="flex flex-col gap-1">
-              <span className="text-xs axiMed text-neutral-400 uppercase tracking-wide">
-                Commits
-              </span>
-              <pre className="text-xs font-mono text-neutral-700 whitespace-pre-wrap bg-neutral-50 border border-neutral-200 rounded-lg px-3 py-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-fg-subtle">Commits</span>
+              <pre className="whitespace-pre-wrap rounded-[var(--radius-sm)] border border-border bg-surface-2 px-3 py-2 font-mono text-xs text-fg-muted">
                 {task.commits}
               </pre>
             </div>
           )}
           {isAdmin && task.autoReviewNote && (
             <div className="flex flex-col gap-1">
-              <span className="text-xs axiMed text-neutral-400 uppercase tracking-wide">
-                yp-review1 note
-              </span>
-              <p className="text-xs text-neutral-700 whitespace-pre-wrap bg-indigo-50 border border-indigo-100 rounded-lg px-3 py-2">
+              <span className="text-xs font-medium uppercase tracking-wide text-fg-subtle">Review note (only you)</span>
+              <p className="whitespace-pre-wrap rounded-[var(--radius-sm)] border border-border bg-surface-2 px-3 py-2 text-xs text-fg-muted">
                 {task.autoReviewNote}
               </p>
             </div>
@@ -305,211 +274,220 @@ export default function TaskDetail({
         </div>
       )}
 
-      {/* Assignee */}
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-neutral-500">Assignee:</span>
-        {isAdmin ? (
-          <select
-            value={task.assigneeId ?? ""}
-            disabled={isPending}
-            onChange={(e) => run(() => assignTask(task.id, e.target.value || null))}
-            className="border border-neutral-300 rounded-lg px-2 py-1 text-sm"
-          >
-            <option value="">Unassigned</option>
-            {users.map((u) => (
-              <option key={u.id} value={u.id}>{u.name}</option>
-            ))}
-          </select>
-        ) : (
-          <span className="axiMed">{task.assignee?.name ?? "Unassigned"}</span>
-        )}
-        <span className="text-neutral-300">·</span>
-        <span className="text-neutral-500">Created by {task.createdBy.name}</span>
-      </div>
-
-      {/* Budget quote -- hours Techaliance quoted, who approved the budget */}
-      {(task.quotedHours != null || task.approvedBy || isApproverOrAdmin) && (
-        <div className="flex items-center gap-2 text-sm flex-wrap">
-          <span className="text-neutral-500">Quoted:</span>
-          {isApproverOrAdmin ? (
-            <form action={handleQuoteSave} className="flex items-center gap-2 flex-wrap">
-              <input
-                type="number"
-                step="0.25"
-                min="0"
-                name="quotedHours"
-                defaultValue={task.quotedHours ?? ""}
-                placeholder="hrs"
-                className="w-20 border border-neutral-300 rounded-lg px-2 py-1 text-sm"
-              />
-              <span className="text-neutral-400">hrs · budget approved by</span>
-              <input
-                type="text"
-                name="approvedBy"
-                defaultValue={task.approvedBy ?? ""}
-                placeholder="name"
-                className="w-28 border border-neutral-300 rounded-lg px-2 py-1 text-sm"
-              />
-              <button type="submit" disabled={isPending} className="text-xs axiMed text-brand">
-                Save
+      {/* Pipeline stepper */}
+      <div className="flex flex-col gap-2 border-t border-border pt-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-fg-muted">Stage</span>
+          {task.changesRequested && <Badge tone="danger">changes requested</Badge>}
+          {task.archived && <Badge tone="neutral">archived</Badge>}
+        </div>
+        <div className="flex gap-1">
+          {PIPELINE_ORDER.map((p) => {
+            const active = task.pipeline === p;
+            return (
+              <button
+                key={p}
+                disabled={isPending || active}
+                onClick={() => run(() => setPipeline(task.id, p), `Moved to ${PIPELINE_LABELS[p]}.`)}
+                title={PIPELINE_HINTS[p]}
+                className={`flex-1 rounded-[var(--radius-sm)] border px-2 py-1.5 text-[0.75rem] font-medium transition-colors ${
+                  active
+                    ? "border-transparent text-white"
+                    : "border-border-strong bg-surface text-fg-muted hover:border-brand"
+                }`}
+                style={active ? { background: PIPELINE_MARKER[p] } : undefined}
+              >
+                {PIPELINE_LABELS[p]}
               </button>
-            </form>
+            );
+          })}
+        </div>
+
+        {/* Guided actions */}
+        <div className="mt-1 flex flex-wrap gap-2">
+          {!task.archived && task.pipeline === "BACKLOG" && (
+            <Button size="sm" variant="primary" disabled={isPending} onClick={() => run(() => startTask(task.id), "Started.")}>
+              Start
+            </Button>
+          )}
+          {!task.archived && task.pipeline === "IN_PROGRESS" && (
+            <Button size="sm" variant="primary" disabled={isPending} onClick={() => run(() => sendForReview(task.id), "Sent for review.")}>
+              Send for review
+            </Button>
+          )}
+          {!task.archived && task.pipeline === "IN_REVIEW" && isReviewer && (
+            <>
+              <Button size="sm" variant="primary" disabled={isPending} onClick={() => setApproveNoteOpen((v) => !v)}>
+                Approve
+              </Button>
+              <Button size="sm" variant="secondary" disabled={isPending} onClick={() => setSendBackOpen((v) => !v)}>
+                Send back
+              </Button>
+            </>
+          )}
+          {!task.archived && task.pipeline === "READY_TO_DEPLOY" && !isBuildArea && (
+            <Button size="sm" variant="primary" disabled={isPending} onClick={() => run(() => markDeployed(task.id), "Marked deployed.")}>
+              Mark deployed to production
+            </Button>
+          )}
+          {!task.archived && task.pipeline === "READY_TO_DEPLOY" && isBuildArea && !inOpenBuild && (
+            <Button size="sm" variant="primary" disabled={isPending} onClick={() => run(() => toggleNextBuild(task.id, true), "Added to the next build.")}>
+              Add to next build
+            </Button>
+          )}
+          {!task.archived && task.pipeline === "DEPLOYED" && (
+            <Button size="sm" variant="secondary" disabled={isPending} onClick={() => run(() => archiveTask(task.id), "Archived.")}>
+              Archive
+            </Button>
+          )}
+          {task.archived ? (
+            <Button size="sm" variant="secondary" disabled={isPending} onClick={() => run(() => unarchiveTask(task.id), "Brought back.")}>
+              Bring back from archive
+            </Button>
           ) : (
-            <span className="axiMed">
-              {task.quotedHours != null ? `${task.quotedHours} hrs` : "—"}
-              {task.approvedBy ? ` · budget approved by ${task.approvedBy}` : ""}
-            </span>
+            task.pipeline !== "DEPLOYED" && (
+              <Button size="sm" variant="ghost" disabled={isPending} onClick={() => run(() => archiveTask(task.id), "Archived.")}>
+                Archive
+              </Button>
+            )
+          )}
+          {canDelete && (
+            <Button size="sm" variant="danger" disabled={isPending} onClick={handleDelete} className="ml-auto">
+              Delete
+            </Button>
           )}
         </div>
-      )}
 
-      {/* Next build */}
-      {(task.build || canEditFields) && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-neutral-500">Build:</span>
+        {approveNoteOpen && task.pipeline === "IN_REVIEW" && (
+          <form action={submitApprove} className="mt-1 flex flex-col gap-2 rounded-[var(--radius-sm)] border border-border bg-surface-2 p-3">
+            <textarea name="note" rows={2} placeholder="Optional note for the team…" className={`${field} text-sm`} />
+            <div className="flex gap-2">
+              <Button type="submit" size="sm" variant="primary" disabled={isPending}>Approve &amp; hand to Yasir</Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setApproveNoteOpen(false)}>Cancel</Button>
+            </div>
+          </form>
+        )}
+        {sendBackOpen && task.pipeline === "IN_REVIEW" && (
+          <form action={submitSendBack} className="mt-1 flex flex-col gap-2 rounded-[var(--radius-sm)] border border-danger/30 bg-danger-wash p-3">
+            <textarea name="comment" rows={3} required placeholder="What needs changing?" className={`${field} text-sm`} />
+            <div className="flex gap-2">
+              <Button type="submit" size="sm" variant="primary" disabled={isPending} className="bg-danger hover:bg-danger-ink">
+                Send back to {task.assignee?.name ?? "the assignee"}
+              </Button>
+              <Button type="button" size="sm" variant="ghost" onClick={() => setSendBackOpen(false)}>Cancel</Button>
+            </div>
+          </form>
+        )}
+      </div>
+
+      {/* People + build + quote */}
+      <div className="flex flex-col gap-2.5 border-t border-border pt-4 text-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-fg-subtle">Assignee</span>
+          {isAdmin ? (
+            <select
+              value={task.assigneeId ?? ""}
+              disabled={isPending}
+              onChange={(e) => run(() => assignTask(task.id, e.target.value || null), "Reassigned.")}
+              className={field}
+            >
+              <option value="">Unassigned</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.name}</option>
+              ))}
+            </select>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 font-medium">
+              <Avatar name={task.assignee?.name} size={18} />
+              {task.assignee?.name ?? "Unassigned"}
+            </span>
+          )}
+          <span className="text-border-strong">·</span>
+          <span className="text-fg-subtle">Created by {task.createdBy.name}</span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-fg-subtle">Build</span>
           {task.build ? (
             <>
-              <span className="axiMed">
-                {task.build.shippedAt
-                  ? `Shipped in build #${task.build.number}`
-                  : `In next build (#${task.build.number})`}
+              <span className="font-medium">
+                {task.build.shippedAt ? `Shipped in build #${task.build.number}` : `In next build (#${task.build.number})`}
               </span>
-              {canEditFields && (
-                <button
-                  disabled={isPending}
-                  onClick={() => run(() => toggleNextBuild(task.id, false))}
-                  className="text-xs text-neutral-400 hover:text-neutral-700"
-                >
-                  Remove
+              {canEditFields && !task.build.shippedAt && (
+                <button className="text-xs text-fg-subtle hover:text-fg" disabled={isPending}
+                  onClick={() => run(() => toggleNextBuild(task.id, false), "Removed from build.")}>
+                  remove
                 </button>
               )}
             </>
+          ) : canEditFields && isBuildArea ? (
+            <button className="text-xs text-fg-subtle hover:text-fg" disabled={isPending}
+              onClick={() => run(() => toggleNextBuild(task.id, true), "Added to the next build.")}>
+              + add to next build
+            </button>
           ) : (
-            canEditFields && (
-              <button
-                disabled={isPending}
-                onClick={() => run(() => toggleNextBuild(task.id, true))}
-                className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1 hover:border-brand transition-colors"
-              >
-                + Include in next build
-              </button>
-            )
+            <span className="text-fg-subtle">—</span>
           )}
         </div>
-      )}
 
-      {/* Photo gallery */}
+        {(task.quotedHours != null || task.approvedBy || isReviewer) && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-fg-subtle">Quoted</span>
+            {isReviewer ? (
+              <form action={submitQuote} className="flex flex-wrap items-center gap-2">
+                <input type="number" step="0.25" min="0" name="quotedHours" defaultValue={task.quotedHours ?? ""}
+                  placeholder="hrs" className={`${field} w-20`} />
+                <span className="text-fg-subtle">hrs · approved by</span>
+                <input type="text" name="approvedBy" defaultValue={task.approvedBy ?? ""} placeholder="name" className={`${field} w-28`} />
+                <Button type="submit" size="sm" variant="ghost" disabled={isPending}>Save</Button>
+              </form>
+            ) : (
+              <span className="font-medium">
+                {task.quotedHours != null ? `${task.quotedHours} hrs` : "—"}
+                {task.approvedBy ? ` · approved by ${task.approvedBy}` : ""}
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Attachments */}
       {task.attachments.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {task.attachments.map((a) => (
             <a key={a.id} href={`/api/attachments/${a.id}`} target="_blank" rel="noreferrer">
-              {/* eslint-disable-next-line @next/next/no-img-element -- src is an
-                  authenticated API route that 307s to a fresh presigned S3 URL each
-                  request; next/image can't proxy/optimize a redirecting, auth-gated
-                  source like this. */}
-              <img
-                src={`/api/attachments/${a.id}`}
-                alt={a.filename}
-                className="w-24 h-24 object-cover rounded-lg border border-neutral-200"
-              />
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={`/api/attachments/${a.id}`} alt={a.filename}
+                className="size-24 rounded-[var(--radius-sm)] border border-border object-cover" />
             </a>
           ))}
         </div>
       )}
 
-      {/* Stage / status -- free-form as of 2026-08-17: any logged-in user
-          can set either, on any task, to any value, at any time. */}
-      <div className="flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-4">
-        <label className="text-sm text-neutral-500" htmlFor="stageSelect">
-          Stage:
-        </label>
-        <select
-          id="stageSelect"
-          value={task.stage}
-          disabled={isPending}
-          onChange={(e) => handleSetStage(e.target.value as Stage)}
-          className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm"
-        >
-          {STAGES.map((s) => (
-            <option key={s} value={s}>{STAGE_LABELS[s]}</option>
-          ))}
-        </select>
-
-        <label className="text-sm text-neutral-500" htmlFor="stageStatusSelect">
-          Status:
-        </label>
-        <select
-          id="stageStatusSelect"
-          value={task.stageStatus}
-          disabled={isPending}
-          onChange={(e) => handleSetStageStatus(e.target.value as StageStatus)}
-          className="border border-neutral-300 rounded-lg px-2 py-1.5 text-sm"
-        >
-          {STAGE_STATUSES.map((s) => (
-            <option key={s} value={s}>{STAGE_STATUS_LABELS[s]}</option>
-          ))}
-        </select>
-
-        {!task.closed && (
-          <button
-            disabled={isPending}
-            onClick={handleClose}
-            className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5 hover:border-brand transition-colors"
-          >
-            Mark Closed
-          </button>
-        )}
-        {task.closed && (
-          <button disabled={isPending} onClick={() => run(() => reopenTask(task.id))} className="axiMed text-sm border border-neutral-300 rounded-lg px-3 py-1.5">
-            Reopen
-          </button>
-        )}
-        {isOwnerOrReviewer && (
-          <button
-            disabled={isPending}
-            onClick={handleDelete}
-            className="axiMed text-sm text-red-600 hover:text-red-700 ml-auto"
-          >
-            Delete
-          </button>
-        )}
-
-        {task.reviewNote && (
-          <p className="text-xs text-neutral-500 w-full">Last review note (legacy): {task.reviewNote}</p>
-        )}
-      </div>
-
-      {/* Comment thread */}
-      <div className="flex flex-col gap-4 border-t border-neutral-100 pt-4">
-        <h2 className="axiBold text-sm text-neutral-700">Comments</h2>
-        {task.comments.length === 0 && (
-          <p className="text-sm text-neutral-400">No comments yet.</p>
-        )}
+      {/* Comments */}
+      <div className="flex flex-col gap-4 border-t border-border pt-4">
+        <h2 className="text-sm font-bold text-fg-muted">Comments</h2>
+        {task.comments.length === 0 && <p className="text-sm text-fg-subtle">No comments yet.</p>}
         {task.comments.map((c) => (
-          <div
-            key={c.id}
-            className={`flex flex-col gap-1.5 rounded-lg px-3 py-2 ${
-              c.isPrivate ? "bg-amber-50 border border-amber-200" : c.isSystem ? "bg-neutral-50" : "bg-neutral-50"
-            }`}
-          >
+          <div key={c.id} className={`flex flex-col gap-1.5 rounded-[var(--radius-sm)] px-3 py-2 ${
+            c.isPrivate ? "border border-warning/30 bg-warning-wash" : "bg-surface-2"
+          }`}>
             <div className="flex items-center gap-2 text-xs">
-              <span className="axiMed text-neutral-700">{c.author.name}</span>
-              <span className="text-neutral-400">
+              <span className="font-medium text-fg">{c.author.name}</span>
+              <span className="text-fg-subtle">
                 {new Date(c.createdAt).toLocaleString("en-US", { timeZone: "America/New_York" })}
               </span>
-              {c.isPrivate && <Badge label="Private note" className="bg-amber-200 text-amber-800" />}
+              {c.isPrivate && <Badge tone="warning">Private note</Badge>}
+              {c.isSystem && <Badge tone="neutral">system</Badge>}
             </div>
-            <p className="text-sm text-neutral-700 whitespace-pre-wrap">{c.body}</p>
+            <p className="whitespace-pre-wrap text-sm text-fg-muted">{c.body}</p>
             {c.attachments.length > 0 && (
               <div className="flex flex-wrap gap-2 pt-1">
                 {c.attachments.map((a) => (
                   <a key={a.id} href={`/api/attachments/${a.id}`} target="_blank" rel="noreferrer">
-                    {/* eslint-disable-next-line @next/next/no-img-element -- see note above */}
-                    <img
-                      src={`/api/attachments/${a.id}`}
-                      alt={a.filename}
-                      className="w-20 h-20 object-cover rounded-lg border border-neutral-200"
-                    />
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={`/api/attachments/${a.id}`} alt={a.filename}
+                      className="size-20 rounded-[var(--radius-sm)] border border-border object-cover" />
                   </a>
                 ))}
               </div>
@@ -517,28 +495,18 @@ export default function TaskDetail({
           </div>
         ))}
 
-        <form action={handleComment} className="flex flex-col gap-2">
-          <textarea
-            name="body"
-            required
-            rows={3}
-            placeholder="Add a comment..."
-            className="border border-neutral-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand"
-          />
+        <form action={submitComment} className="flex flex-col gap-2">
+          <textarea name="body" required rows={3} placeholder="Add a comment…" className={`${field} text-sm`} />
           <AttachmentUploader />
           {isAdmin && (
-            <label className="flex items-center gap-2 text-xs text-neutral-500">
+            <label className="flex items-center gap-2 text-xs text-fg-subtle">
               <input type="checkbox" name="isPrivate" />
-              Private note (only visible to you)
+              Private note (only you see it)
             </label>
           )}
-          <button
-            type="submit"
-            disabled={isPending}
-            className="axiMed text-sm bg-brand text-white rounded-lg px-4 py-1.5 w-fit disabled:opacity-50"
-          >
+          <Button type="submit" size="sm" variant="primary" disabled={isPending} className="w-fit">
             Comment
-          </button>
+          </Button>
         </form>
       </div>
     </div>

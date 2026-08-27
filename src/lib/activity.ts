@@ -8,16 +8,23 @@ export type ActivityAction =
   | "edited"
   | "assigned"
   | "unassigned"
-  | "stage_changed"
-  | "stage_status_changed"
-  | "closed"
-  | "reopened"
+  | "moved"
+  | "approved"
+  | "sent_back"
+  | "deployed"
+  | "archived"
+  | "unarchived"
   | "deleted"
   | "published"
   | "commented"
   | "quote_updated"
   | "build_tagged"
-  | "build_untagged";
+  | "build_untagged"
+  // legacy actions -- still on old ActivityLog rows, no longer written
+  | "stage_changed"
+  | "stage_status_changed"
+  | "closed"
+  | "reopened";
 
 type LogActivityInput = {
   actorId: string;

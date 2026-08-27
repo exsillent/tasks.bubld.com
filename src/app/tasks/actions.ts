@@ -8,7 +8,8 @@ import { getVisibleTask } from "@/lib/tasks";
 import { notifyByEmail } from "@/lib/notify";
 import { createUploadUrl, verifyUploadedObject } from "@/lib/storage";
 import { logActivity } from "@/lib/activity";
-import type { Priority, TaskType, Stage, StageStatus, Prisma } from "@prisma/client";
+import { PIPELINE_LABELS } from "@/lib/labels";
+import type { Priority, TaskType, Pipeline, Prisma } from "@prisma/client";
 
 const APP_URL = process.env.APP_URL ?? "http://localhost:3000";
 
@@ -345,15 +346,45 @@ export async function toggleNextBuild(taskId: string, include: boolean): Promise
   revalidatePath("/");
 }
 
-/** Archives the current open build as shipped history. ADMIN only. */
+/**
+ * Ships the open build: stamps shippedAt and moves every task in it to
+ * DEPLOYED (that's what "the build shipped" means for the app-store apps).
+ * ADMIN only.
+ */
 export async function shipCurrentBuild(): Promise<void> {
-  await requireRole("ADMIN");
+  const session = await requireRole("ADMIN");
   const open = await prisma.build.findFirst({ where: { shippedAt: null } });
   if (!open) throw new Error("There's no open build to ship.");
-  const taskCount = await prisma.task.count({ where: { buildId: open.id } });
-  if (taskCount === 0) throw new Error("The next build has no tasks in it yet.");
+  const tasks = await prisma.task.findMany({
+    where: { buildId: open.id },
+    select: { id: true, number: true, title: true, createdById: true, assigneeId: true, pipeline: true },
+  });
+  if (tasks.length === 0) throw new Error("The next build has no tasks in it yet.");
 
-  await prisma.build.update({ where: { id: open.id }, data: { shippedAt: new Date() } });
+  await prisma.$transaction(async (tx) => {
+    await tx.build.update({ where: { id: open.id }, data: { shippedAt: new Date() } });
+    const toDeploy = tasks.filter((t) => t.pipeline !== "DEPLOYED");
+    if (toDeploy.length > 0) {
+      await tx.task.updateMany({
+        where: { id: { in: toDeploy.map((t) => t.id) } },
+        data: { pipeline: "DEPLOYED" },
+      });
+      for (const t of toDeploy) {
+        await logActivity(tx, {
+          actorId: session.sub,
+          action: "deployed",
+          taskId: t.id,
+          taskNumber: t.number,
+          taskTitle: t.title,
+          taskCreatedById: t.createdById,
+          taskAssigneeId: t.assigneeId,
+          field: "pipeline",
+          oldValue: PIPELINE_LABELS[t.pipeline],
+          newValue: PIPELINE_LABELS.DEPLOYED,
+        });
+      }
+    }
+  });
   revalidatePath("/");
 }
 
@@ -402,130 +433,18 @@ export async function assignTask(taskId: string, assigneeId: string | null): Pro
 }
 
 // ---------------------------------------------------------------------------
-// Stage / status -- replaces the old linear pipeline (2026-08-17). Both axes
-// are free-form: any logged-in user can set either, on any task, to any
-// value, at any time -- no forced sequence, no approval gate. Each change
-// still posts a system comment so the history stays visible.
+// Pipeline -- the single ordered track that replaced Stage x StageStatus
+// (2026-08-27):
+//
+//   BACKLOG -> IN_PROGRESS -> IN_REVIEW -> READY_TO_DEPLOY -> DEPLOYED
+//
+// setPipeline is the free-form direct set any logged-in user can call (the
+// board's move menu, the detail stepper -- same freedom the two old axes
+// had). The named transitions below are guided wrappers that also do the
+// right side effects (assign, flag, notify, system comment).
 // ---------------------------------------------------------------------------
 
-const STAGE_LABELS: Record<Stage, string> = {
-  DEVELOPMENT: "Development",
-  STAGING: "Staging",
-  PRODUCTION: "Production",
-};
-
-const STAGE_STATUS_LABELS: Record<StageStatus, string> = {
-  OPEN: "Open",
-  IN_PROGRESS: "In Progress",
-  CHANGES_REQUESTED: "Changes Requested",
-  COMPLETE: "Complete",
-};
-
-// Order Complete auto-advances through -- see setStageStatus below.
-const STAGE_ORDER: Stage[] = ["DEVELOPMENT", "STAGING", "PRODUCTION"];
-
-export async function setStage(taskId: string, stage: Stage): Promise<void> {
-  const session = await requireSession();
-  const task = await getVisibleTask(taskId, session);
-  if (!task) throw new Error("Task not found.");
-  if (task.stage === stage) return;
-
-  await prisma.$transaction(async (tx) => {
-    await tx.task.update({ where: { id: taskId }, data: { stage } });
-    await tx.comment.create({
-      data: {
-        taskId,
-        authorId: session.sub,
-        isSystem: true,
-        body: `${session.name} moved this to ${STAGE_LABELS[stage]}.`,
-      },
-    });
-    await logActivity(tx, {
-      actorId: session.sub,
-      action: "stage_changed",
-      taskId: task.id,
-      taskNumber: task.number,
-      taskTitle: task.title,
-      taskCreatedById: task.createdById,
-      taskAssigneeId: task.assigneeId,
-      field: "stage",
-      oldValue: STAGE_LABELS[task.stage],
-      newValue: STAGE_LABELS[stage],
-    });
-  });
-
-  revalidatePath(`/tasks/${taskId}`);
-  revalidatePath("/");
-}
-
-export async function setStageStatus(taskId: string, stageStatus: StageStatus): Promise<void> {
-  const session = await requireSession();
-  const task = await getVisibleTask(taskId, session);
-  if (!task) throw new Error("Task not found.");
-  if (task.stageStatus === stageStatus) return;
-
-  // Marking Complete auto-advances to the next stage and resets status to
-  // Open there -- except from Production, which has nowhere further to go
-  // (Complete just stays Complete). This is a convenience default, not a
-  // gate: stage/stageStatus can still be set directly to anything, same as
-  // always -- see the comment above setStage/setStageStatus.
-  const currentIndex = STAGE_ORDER.indexOf(task.stage);
-  const advanceStage = stageStatus === "COMPLETE" && currentIndex < STAGE_ORDER.length - 1;
-  const nextStage = advanceStage ? STAGE_ORDER[currentIndex + 1] : task.stage;
-  const finalStageStatus = advanceStage ? "OPEN" : stageStatus;
-
-  await prisma.$transaction(async (tx) => {
-    await tx.task.update({
-      where: { id: taskId },
-      data: { stage: nextStage, stageStatus: finalStageStatus },
-    });
-
-    const commentBody = advanceStage
-      ? `${session.name} marked ${STAGE_LABELS[task.stage]} complete -- moved to ${STAGE_LABELS[nextStage]}.`
-      : `${session.name} set status to ${STAGE_STATUS_LABELS[stageStatus]}.`;
-
-    await tx.comment.create({
-      data: { taskId, authorId: session.sub, isSystem: true, body: commentBody },
-    });
-
-    await logActivity(tx, {
-      actorId: session.sub,
-      action: "stage_status_changed",
-      taskId: task.id,
-      taskNumber: task.number,
-      taskTitle: task.title,
-      taskCreatedById: task.createdById,
-      taskAssigneeId: task.assigneeId,
-      field: "stageStatus",
-      oldValue: STAGE_STATUS_LABELS[task.stageStatus],
-      newValue: STAGE_STATUS_LABELS[stageStatus],
-    });
-
-    if (advanceStage) {
-      await logActivity(tx, {
-        actorId: session.sub,
-        action: "stage_changed",
-        taskId: task.id,
-        taskNumber: task.number,
-        taskTitle: task.title,
-        taskCreatedById: task.createdById,
-        taskAssigneeId: task.assigneeId,
-        field: "stage",
-        oldValue: STAGE_LABELS[task.stage],
-        newValue: STAGE_LABELS[nextStage],
-      });
-    }
-  });
-
-  revalidatePath(`/tasks/${taskId}`);
-  revalidatePath("/");
-}
-
-// ---------------------------------------------------------------------------
-// Close / Reopen -- manual, any logged-in user, from any stage/status at
-// any time (2026-08-17: closing is decoupled from stage/status entirely --
-// reaching Production/Complete does not auto-close a task).
-// ---------------------------------------------------------------------------
+type VisibleTask = NonNullable<Awaited<ReturnType<typeof getVisibleTask>>>;
 
 function requireOwnerOrReviewer(
   session: { role: string; sub: string },
@@ -538,87 +457,254 @@ function requireOwnerOrReviewer(
   }
 }
 
-export async function reopenTask(taskId: string): Promise<void> {
-  const session = await requireSession();
-  const task = await getVisibleTask(taskId, session);
-  if (!task) throw new Error("Task not found.");
-  if (!task.closed) {
-    throw new Error("Task is not closed.");
+/** The account tasks land on when a reviewer approves -- "back to Yasir". */
+async function primaryAdminId(tx: Prisma.TransactionClient): Promise<string | null> {
+  const admin = await tx.user.findFirst({
+    where: { role: "ADMIN", isActive: true },
+    orderBy: { createdAt: "asc" },
+    select: { id: true },
+  });
+  return admin?.id ?? null;
+}
+
+type PipelineChange = {
+  pipeline?: Pipeline;
+  changesRequested?: boolean;
+  assigneeId?: string | null;
+  archived?: boolean;
+  action: "moved" | "approved" | "sent_back" | "deployed" | "archived" | "unarchived";
+  systemComment?: string;
+  userComment?: string;
+  notify?: { subject: string; body: string };
+};
+
+async function commitPipeline(
+  session: { sub: string; name: string },
+  task: VisibleTask,
+  change: PipelineChange,
+): Promise<void> {
+  const data: Prisma.TaskUpdateInput = {};
+  if (change.pipeline !== undefined) data.pipeline = change.pipeline;
+  if (change.changesRequested !== undefined) data.changesRequested = change.changesRequested;
+  if (change.archived !== undefined) {
+    data.archived = change.archived;
+    data.archivedAt = change.archived ? new Date() : null;
+  }
+  if (change.assigneeId !== undefined) {
+    data.assignee = change.assigneeId
+      ? { connect: { id: change.assigneeId } }
+      : { disconnect: true };
   }
 
   await prisma.$transaction(async (tx) => {
-    await tx.task.update({ where: { id: taskId }, data: { closed: false, closedAt: null } });
-    await tx.comment.create({
-      data: {
-        taskId,
-        authorId: session.sub,
-        isSystem: true,
-        body: `Reopened by ${session.name}.`,
-      },
-    });
+    await tx.task.update({ where: { id: task.id }, data });
+    if (change.systemComment) {
+      await tx.comment.create({
+        data: { taskId: task.id, authorId: session.sub, isSystem: true, body: change.systemComment },
+      });
+    }
+    if (change.userComment) {
+      await tx.comment.create({
+        data: { taskId: task.id, authorId: session.sub, body: change.userComment },
+      });
+    }
     await logActivity(tx, {
       actorId: session.sub,
-      action: "reopened",
+      action: change.action,
       taskId: task.id,
       taskNumber: task.number,
       taskTitle: task.title,
       taskCreatedById: task.createdById,
-      taskAssigneeId: task.assigneeId,
+      taskAssigneeId:
+        change.assigneeId !== undefined ? change.assigneeId : task.assigneeId,
+      field: change.pipeline !== undefined ? "pipeline" : undefined,
+      oldValue: change.pipeline !== undefined ? PIPELINE_LABELS[task.pipeline] : undefined,
+      newValue: change.pipeline !== undefined ? PIPELINE_LABELS[change.pipeline] : undefined,
     });
   });
 
-  await notifyTaskEvent(
-    taskId,
-    session.sub,
-    `Task reopened: ${task.title}`,
-    `${session.name} reopened "${task.title}".`,
-  );
+  if (change.notify && !task.isDraft) {
+    await notifyTaskEvent(task.id, session.sub, change.notify.subject, change.notify.body);
+  }
 
-  revalidatePath(`/tasks/${taskId}`);
+  revalidatePath(`/tasks/${task.id}`);
   revalidatePath("/");
 }
 
-export async function closeTask(taskId: string): Promise<void> {
+/** Direct set -- any logged-in user, any value. Board move menu / stepper. */
+export async function setPipeline(taskId: string, pipeline: Pipeline): Promise<void> {
   const session = await requireSession();
   const task = await getVisibleTask(taskId, session);
   if (!task) throw new Error("Task not found.");
-  if (task.closed) {
-    throw new Error("Task is already closed.");
+  if (task.pipeline === pipeline) return;
+  await commitPipeline(session, task, {
+    pipeline,
+    action: "moved",
+    // Leaving IN_REVIEW clears the "changes requested" flag -- it only
+    // describes a task currently sitting with a developer.
+    changesRequested: pipeline === "IN_PROGRESS" ? task.changesRequested : false,
+    systemComment: `${session.name} moved this to ${PIPELINE_LABELS[pipeline]}.`,
+  });
+}
+
+/** BACKLOG -> IN_PROGRESS. */
+export async function startTask(taskId: string): Promise<void> {
+  const session = await requireSession();
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  await commitPipeline(session, task, {
+    pipeline: "IN_PROGRESS",
+    action: "moved",
+    systemComment: `${session.name} started this.`,
+  });
+}
+
+/** -> IN_REVIEW. Clears any "changes requested" flag; pings the reviewers. */
+export async function sendForReview(taskId: string): Promise<void> {
+  const session = await requireSession();
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  await commitPipeline(session, task, {
+    pipeline: "IN_REVIEW",
+    changesRequested: false,
+    action: "moved",
+    systemComment: `${session.name} sent this for review.`,
+    notify: {
+      subject: `Ready to review: ${task.title}`,
+      body: `${session.name} sent "${task.title}" for review.`,
+    },
+  });
+}
+
+/**
+ * Reviewer approves: task moves to READY_TO_DEPLOY and lands back on the
+ * admin's plate. APPROVER or ADMIN only -- this is the one place an
+ * approver is allowed to reassign a task.
+ */
+export async function approveTask(taskId: string, note?: string): Promise<void> {
+  const session = await requireRole("ADMIN", "APPROVER");
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+
+  const adminId = await prisma.$transaction((tx) => primaryAdminId(tx));
+  await commitPipeline(session, task, {
+    pipeline: "READY_TO_DEPLOY",
+    changesRequested: false,
+    assigneeId: adminId ?? task.assigneeId,
+    action: "approved",
+    systemComment: `${session.name} approved this. Ready to deploy.`,
+    userComment: note?.trim() || undefined,
+    notify: {
+      subject: `Approved: ${task.title}`,
+      body: `${session.name} approved "${task.title}".${note?.trim() ? `\n\n${note.trim()}` : ""}`,
+    },
+  });
+}
+
+/**
+ * Reviewer sends a task back: to IN_PROGRESS with the "changes requested"
+ * flag and a required comment. Assignee is unchanged -- it goes back to
+ * whoever was working on it. APPROVER or ADMIN only.
+ */
+export async function sendBack(taskId: string, comment: string): Promise<void> {
+  const session = await requireRole("ADMIN", "APPROVER");
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  const body = comment.trim();
+  if (!body) throw new Error("Add a comment explaining what needs changing.");
+
+  await commitPipeline(session, task, {
+    pipeline: "IN_PROGRESS",
+    changesRequested: true,
+    action: "sent_back",
+    userComment: body,
+    notify: {
+      subject: `Changes requested: ${task.title}`,
+      body: `${session.name} sent "${task.title}" back for changes:\n\n${body}`,
+    },
+  });
+}
+
+/**
+ * Mark a task live in production. Only for CONTINUOUS app areas -- BUILD
+ * areas (Customer App, Technician App) go out in a numbered build instead,
+ * so this rejects them and points at the build flow.
+ */
+export async function markDeployed(taskId: string): Promise<void> {
+  const session = await requireSession();
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  if (task.appArea.releaseMode === "BUILD") {
+    throw new Error(
+      `${task.appArea.name} ships in a build -- add this to the next build instead.`,
+    );
   }
+  await commitPipeline(session, task, {
+    pipeline: "DEPLOYED",
+    action: "deployed",
+    systemComment: `${session.name} marked this deployed to production.`,
+    notify: {
+      subject: `Deployed: ${task.title}`,
+      body: `${session.name} marked "${task.title}" deployed to production.`,
+    },
+  });
+}
+
+/** Off the board, still searchable. Replaces the old close/reopen pair. */
+export async function archiveTask(taskId: string): Promise<void> {
+  const session = await requireSession();
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  if (task.archived) return;
+  await commitPipeline(session, task, {
+    archived: true,
+    action: "archived",
+    systemComment: `${session.name} archived this.`,
+  });
+}
+
+export async function unarchiveTask(taskId: string): Promise<void> {
+  const session = await requireSession();
+  const task = await getVisibleTask(taskId, session);
+  if (!task) throw new Error("Task not found.");
+  if (!task.archived) return;
+  await commitPipeline(session, task, {
+    archived: false,
+    action: "unarchived",
+    systemComment: `${session.name} brought this back from the archive.`,
+  });
+}
+
+/** Bulk-archive every DEPLOYED task -- the "tidy up the board" button. */
+export async function archiveAllDeployed(): Promise<number> {
+  const session = await requireSession();
+  const deployed = await prisma.task.findMany({
+    where: { pipeline: "DEPLOYED", archived: false, isDraft: false },
+    select: { id: true, number: true, title: true, createdById: true, assigneeId: true },
+  });
+  if (deployed.length === 0) return 0;
 
   await prisma.$transaction(async (tx) => {
-    await tx.task.update({
-      where: { id: taskId },
-      data: { closed: true, closedAt: new Date() },
+    const now = new Date();
+    await tx.task.updateMany({
+      where: { id: { in: deployed.map((t) => t.id) } },
+      data: { archived: true, archivedAt: now },
     });
-    await tx.comment.create({
-      data: {
-        taskId,
-        authorId: session.sub,
-        isSystem: true,
-        body: `Closed by ${session.name}.`,
-      },
-    });
-    await logActivity(tx, {
-      actorId: session.sub,
-      action: "closed",
-      taskId: task.id,
-      taskNumber: task.number,
-      taskTitle: task.title,
-      taskCreatedById: task.createdById,
-      taskAssigneeId: task.assigneeId,
-    });
+    for (const t of deployed) {
+      await logActivity(tx, {
+        actorId: session.sub,
+        action: "archived",
+        taskId: t.id,
+        taskNumber: t.number,
+        taskTitle: t.title,
+        taskCreatedById: t.createdById,
+        taskAssigneeId: t.assigneeId,
+      });
+    }
   });
 
-  await notifyTaskEvent(
-    taskId,
-    session.sub,
-    `Task closed: ${task.title}`,
-    `${session.name} closed "${task.title}".`,
-  );
-
-  revalidatePath(`/tasks/${taskId}`);
   revalidatePath("/");
+  return deployed.length;
 }
 
 // ---------------------------------------------------------------------------
