@@ -165,7 +165,9 @@ export default function BoardView({
       READY_TO_DEPLOY: [],
       DEPLOYED: [],
     };
-    for (const t of filtered) if (!t.archived) cols[t.pipeline].push(t);
+    // Archived tasks only appear on the board when the toggle is on -- they
+    // sit in their pipeline column, rendered dimmed by TaskCard.
+    for (const t of filtered) if (!t.archived || showArchived) cols[t.pipeline].push(t);
     for (const key of PIPELINE_ORDER) {
       cols[key].sort((a, b) => {
         const ao = isOverdue(a) ? 1 : 0;
@@ -175,7 +177,7 @@ export default function BoardView({
       });
     }
     return cols;
-  }, [filtered]);
+  }, [filtered, showArchived]);
 
   const archivedCount = tasks.filter((t) => t.archived).length;
   const deployedCount = tasks.filter((t) => !t.archived && t.pipeline === "DEPLOYED").length;
@@ -268,14 +270,18 @@ export default function BoardView({
             </option>
           ))}
         </select>
-        <label className="flex items-center gap-1.5 text-[0.8125rem] text-fg-muted">
-          <input
-            type="checkbox"
-            checked={showArchived}
-            onChange={(e) => setParams({ archived: e.target.checked ? "1" : null })}
-          />
+        <button
+          type="button"
+          aria-pressed={showArchived}
+          onClick={() => setParams({ archived: showArchived ? null : "1" })}
+          className={`h-8 rounded-[var(--radius-sm)] border px-2.5 text-[0.8125rem] font-medium transition-colors ${
+            showArchived
+              ? "border-fg bg-fg text-bg"
+              : "border-border-strong bg-surface text-fg-muted hover:bg-surface-2"
+          }`}
+        >
           Archived ({archivedCount})
-        </label>
+        </button>
         {hasFilters && (
           <button
             onClick={() => {
@@ -294,15 +300,18 @@ export default function BoardView({
             </Button>
           )}
           <div className="flex overflow-hidden rounded-[var(--radius-sm)] border border-border-strong">
-            {(["board", "table"] as const).map((v) => (
+            {([
+              ["board", "Board"],
+              ["table", "Table"],
+            ] as const).map(([v, label]) => (
               <button
                 key={v}
                 onClick={() => setParams({ view: v === "board" ? null : v })}
-                className={`px-2.5 py-1 text-[0.8125rem] font-medium capitalize transition-colors ${
+                className={`px-2.5 py-1 text-[0.8125rem] font-medium transition-colors ${
                   view === v ? "bg-fg text-bg" : "bg-surface text-fg-muted hover:bg-surface-2"
                 }`}
               >
-                {v}
+                {label}
               </button>
             ))}
           </div>

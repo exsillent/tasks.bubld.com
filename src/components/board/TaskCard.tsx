@@ -97,7 +97,9 @@ export default function TaskCard({
 
   return (
     <div
-      className="group relative rounded-[var(--radius-sm)] border border-border bg-surface p-2.5 shadow-[var(--shadow-sm)] transition-shadow hover:shadow-[var(--shadow)]"
+      className={`group relative rounded-[var(--radius-sm)] border border-border bg-surface p-2.5 shadow-[var(--shadow-sm)] transition-shadow hover:shadow-[var(--shadow)] ${
+        task.archived ? "opacity-60" : ""
+      }`}
       style={{ borderLeft: `3px solid ${task.archived ? "var(--border-strong)" : PIPELINE_MARKER[task.pipeline]}` }}
     >
       <div className="flex items-start gap-2">

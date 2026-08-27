@@ -9,7 +9,7 @@ async function login(page: Page, email: string) {
   await page.waitForURL("/");
 }
 
-async function createTask(page: Page, title: string) {
+async function createTask(page: Page, title: string): Promise<string> {
   await page.getByRole("link", { name: "+ New task" }).click();
   await page.waitForURL("/tasks/new");
   await page.getByLabel("Title").fill(title);
@@ -18,6 +18,7 @@ async function createTask(page: Page, title: string) {
   await page.locator("select[name=type]").selectOption("FEATURE");
   await page.getByRole("button", { name: "Create task" }).click();
   await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
+  return page.url();
 }
 
 test.describe("board", () => {
@@ -27,10 +28,10 @@ test.describe("board", () => {
     await page.goto("/");
 
     await expect(page.getByText("E2E view toggle task")).toBeVisible();
-    await page.getByRole("button", { name: "Table" }).click();
+    await page.getByRole("button", { name: "Table", exact: true }).click();
     await expect(page).toHaveURL(/view=table/);
     await expect(page.getByRole("cell", { name: "E2E view toggle task" })).toBeVisible();
-    await page.getByRole("button", { name: "Board" }).click();
+    await page.getByRole("button", { name: "Board", exact: true }).click();
     await expect(page).not.toHaveURL(/view=table/);
   });
 
@@ -44,22 +45,22 @@ test.describe("board", () => {
     await page.getByText("E2E filter persist task").click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await page.getByRole("button", { name: "Close task detail" }).click();
+    await expect(page.getByRole("dialog")).not.toBeVisible();
     await expect(page).toHaveURL(/q=filter/);
     await expect(page.getByPlaceholder("Search or #number…")).toHaveValue("filter persist");
   });
 
   test("the Needs you strip shows a reviewer their review queue", async ({ page }) => {
-    // Yasir creates a task and pushes it to For review.
     await login(page, "yasir-e2e@example.com");
     await createTask(page, "E2E review queue task");
-    await page.getByRole("button", { name: "For review" }).click();
-    await page.waitForLoadState("networkidle");
+    await page.getByRole("button", { name: "For review", exact: true }).click();
+    await expect(page.getByText(/Moved to For review\./)).toBeVisible();
 
     await page.context().clearCookies();
     await login(page, "roland-e2e@example.com");
-    const needs = page.locator("text=Needs you").locator("..");
-    await expect(needs.getByRole("button", { name: /to review/ })).toBeVisible();
-    await needs.getByRole("button", { name: /to review/ }).click();
+    const chip = page.getByRole("button", { name: /\d+ to review/ });
+    await expect(chip).toBeVisible();
+    await chip.click();
     await expect(page).toHaveURL(/focus=review/);
     await expect(page.getByText("E2E review queue task")).toBeVisible();
   });
@@ -68,11 +69,12 @@ test.describe("board", () => {
     await login(page, "yasir-e2e@example.com");
     await createTask(page, "E2E archive toggle task");
     await page.getByRole("button", { name: "Archive", exact: true }).first().click();
-    await page.waitForLoadState("networkidle");
+    await expect(page.getByText("Archived.")).toBeVisible();
     await page.goto("/");
 
     await expect(page.getByText("E2E archive toggle task")).toHaveCount(0);
-    await page.getByLabel(/Archived/).check();
+    await page.getByRole("button", { name: /Archived \(/ }).click();
+    await expect(page).toHaveURL(/archived=1/);
     await expect(page.getByText("E2E archive toggle task")).toBeVisible();
   });
 });

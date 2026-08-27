@@ -10,8 +10,8 @@ async function login(page: Page, email: string) {
 }
 
 test.describe("updates", () => {
-  test("a comment on your task shows in your digest, your own actions don't", async ({ page }) => {
-    // Yasir's first board view sets his last-seen from now.
+  test("a task comment reaches the creator's digest, not the commenter's own", async ({ page }) => {
+    // Yasir visits Updates first so his last-seen is set to now.
     await login(page, "yasir-e2e@example.com");
     await page.getByRole("link", { name: "Updates" }).click();
     await page.waitForURL("/activity");
@@ -22,26 +22,29 @@ test.describe("updates", () => {
     await page.locator("select[name=appAreaId]").selectOption("infrastructure");
     await page.getByRole("button", { name: "Create task" }).click();
     await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
-    await page.locator("select").filter({ hasText: "Unassigned" }).selectOption({ label: "Techaliance" });
-    await page.waitForLoadState("networkidle");
     const taskUrl = page.url();
+    await page.locator("select").filter({ hasText: "Unassigned" }).selectOption({ label: "Techaliance" });
+    await expect(page.getByText("Reassigned.")).toBeVisible();
 
-    // Techaliance comments -- shows in Yasir's digest (creator), not their own.
+    // Techaliance comments. Their digest shows Yasir's assignment (a real
+    // heads-up for them) but never their own comment.
     await page.context().clearCookies();
     await login(page, "tech-e2e@example.com");
     await page.goto(taskUrl);
     await page.getByPlaceholder("Add a comment…").fill("Looking into it.");
     await page.getByRole("button", { name: "Comment" }).click();
-    await page.waitForLoadState("networkidle");
     await page.goto("/activity");
-    await expect(page.getByText("New since your last visit")).toHaveCount(0);
+    const techDigest = page.locator("text=New since your last visit").locator("..");
+    await expect(techDigest.getByText("assigned #")).toBeVisible();
+    await expect(techDigest.getByText("commented on #")).toHaveCount(0);
 
+    // Yasir (the creator) sees Techaliance's comment on his next visit.
     await page.context().clearCookies();
     await login(page, "yasir-e2e@example.com");
     await page.goto("/activity");
-    const digest = page.locator("text=New since your last visit").locator("..");
-    await expect(digest).toBeVisible();
-    await expect(digest.getByText("commented on #")).toBeVisible();
+    const yasirDigest = page.locator("text=New since your last visit").locator("..");
+    await expect(yasirDigest).toBeVisible();
+    await expect(yasirDigest.getByText("commented on #")).toBeVisible();
   });
 
   test("the full feed lists team activity grouped by day", async ({ page }) => {
@@ -54,7 +57,7 @@ test.describe("updates", () => {
     await page.waitForURL(/\/tasks\/(?!new$)[a-z0-9]+$/);
 
     await page.goto("/activity");
-    await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Today", exact: true })).toBeVisible();
     await expect(page.getByText("created #").first()).toBeVisible();
   });
 });
