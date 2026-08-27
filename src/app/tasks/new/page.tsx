@@ -13,8 +13,8 @@ export default async function NewTaskPage() {
   return (
     <>
       <AppHeader session={session} />
-      <main className="flex-1 px-4 sm:px-6 py-6 max-w-2xl w-full mx-auto">
-        <h1 className="axiBold text-lg text-neutral-900 mb-5">New Task</h1>
+      <main className="mx-auto w-full max-w-2xl flex-1 px-4 py-6 sm:px-6">
+        <h1 className="mb-5 text-lg font-bold text-fg">New task</h1>
         <NewTaskForm users={users} appAreas={appAreas} isAdmin={session.role === "ADMIN"} />
       </main>
     </>

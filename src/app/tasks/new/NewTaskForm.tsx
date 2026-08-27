@@ -3,6 +3,7 @@
 import { useActionState } from "react";
 import { createTask, type CreateTaskState } from "@/app/tasks/actions";
 import AttachmentUploader from "@/components/AttachmentUploader";
+import { Button } from "@/components/ui/Button";
 import { PRIORITY_LABELS, TYPE_LABELS } from "@/lib/labels";
 import type { Priority, TaskType } from "@prisma/client";
 
@@ -10,8 +11,8 @@ const PRIORITIES = Object.keys(PRIORITY_LABELS) as Priority[];
 const TYPES = Object.keys(TYPE_LABELS) as TaskType[];
 
 const inputClass =
-  "border border-neutral-300 rounded-lg px-3 py-2 text-sm outline-none focus:border-brand transition-colors w-full";
-const labelClass = "text-sm axiMed text-neutral-700";
+  "w-full rounded-[var(--radius-sm)] border border-border-strong bg-surface px-3 py-2 text-sm outline-none focus:border-brand";
+const labelClass = "text-sm font-medium text-fg-muted";
 
 export default function NewTaskForm({
   users,
@@ -22,110 +23,70 @@ export default function NewTaskForm({
   appAreas: { id: string; name: string }[];
   isAdmin: boolean;
 }) {
-  const [state, formAction, pending] = useActionState<CreateTaskState, FormData>(
-    createTask,
-    null,
-  );
+  const [state, formAction, pending] = useActionState<CreateTaskState, FormData>(createTask, null);
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1">
-        <label htmlFor="title" className={labelClass}>
-          Title
-        </label>
-        <input id="title" name="title" required className={inputClass} />
-      </div>
+      <label className="flex flex-col gap-1">
+        <span className={labelClass}>Title</span>
+        <input name="title" required className={inputClass} />
+      </label>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="description" className={labelClass}>
-          Description
-        </label>
-        <textarea
-          id="description"
-          name="description"
-          required
-          rows={4}
-          className={inputClass}
-        />
-      </div>
+      <label className="flex flex-col gap-1">
+        <span className={labelClass}>Description</span>
+        <textarea name="description" required rows={4} className={inputClass} />
+      </label>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div className="flex flex-col gap-1">
-          <label htmlFor="appAreaId" className={labelClass}>
-            App area
-          </label>
-          <select id="appAreaId" name="appAreaId" required className={inputClass}>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>App area</span>
+          <select name="appAreaId" required className={inputClass}>
             {appAreas.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
+              <option key={a.id} value={a.id}>{a.name}</option>
             ))}
           </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="type" className={labelClass}>
-            Type
-          </label>
-          <select id="type" name="type" required className={inputClass}>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>Type</span>
+          <select name="type" required className={inputClass}>
             {TYPES.map((t) => (
-              <option key={t} value={t}>
-                {TYPE_LABELS[t]}
-              </option>
+              <option key={t} value={t}>{TYPE_LABELS[t]}</option>
             ))}
           </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="priority" className={labelClass}>
-            Priority
-          </label>
-          <select id="priority" name="priority" required defaultValue="MEDIUM" className={inputClass}>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>Priority</span>
+          <select name="priority" required defaultValue="MEDIUM" className={inputClass}>
             {PRIORITIES.map((p) => (
-              <option key={p} value={p}>
-                {PRIORITY_LABELS[p]}
-              </option>
+              <option key={p} value={p}>{PRIORITY_LABELS[p]}</option>
             ))}
           </select>
-        </div>
-        <div className="flex flex-col gap-1">
-          <label htmlFor="dueDate" className={labelClass}>
-            Due date
-          </label>
-          <input id="dueDate" name="dueDate" type="date" className={inputClass} />
-        </div>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className={labelClass}>Due date</span>
+          <input name="dueDate" type="date" className={inputClass} />
+        </label>
       </div>
 
-      <div className="flex flex-col gap-1">
-        <label htmlFor="assigneeId" className={labelClass}>
-          Assignee
-        </label>
-        <select id="assigneeId" name="assigneeId" className={inputClass} defaultValue="">
+      <label className="flex flex-col gap-1">
+        <span className={labelClass}>Assignee</span>
+        <select name="assigneeId" className={inputClass} defaultValue="">
           <option value="">Unassigned</option>
           {users.map((u) => (
-            <option key={u.id} value={u.id}>
-              {u.name}
-            </option>
+            <option key={u.id} value={u.id}>{u.name}</option>
           ))}
         </select>
-      </div>
+      </label>
 
-      <div className="flex flex-col gap-1">
-        <span className={labelClass}>Where was this found?</span>
-        <div className="flex gap-4 text-sm text-neutral-600">
-          <label className="flex items-center gap-2">
-            <input type="radio" name="foundWhere" value="staging" defaultChecked />
-            Staging
-          </label>
-          <label className="flex items-center gap-2">
-            <input type="radio" name="foundWhere" value="production" />
-            Production
-          </label>
-        </div>
-      </div>
+      <label className="flex items-center gap-2 text-sm text-fg-muted">
+        <input type="checkbox" name="foundWhere" value="production" />
+        This is a live production bug
+      </label>
 
       {isAdmin && (
-        <label className="flex items-center gap-2 text-sm text-neutral-600">
+        <label className="flex items-center gap-2 text-sm text-fg-muted">
           <input type="checkbox" name="isDraft" />
-          Keep private (draft) -- only visible to you until published
+          Keep private (draft) — only you see it until published
         </label>
       )}
 
@@ -135,18 +96,12 @@ export default function NewTaskForm({
       </div>
 
       {state?.error && (
-        <p className="text-sm text-red-600" role="alert">
-          {state.error}
-        </p>
+        <p className="text-sm text-danger-ink" role="alert">{state.error}</p>
       )}
 
-      <button
-        type="submit"
-        disabled={pending}
-        className="axiBold bg-brand text-white rounded-lg py-2.5 text-sm hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed w-fit px-6"
-      >
-        {pending ? "Creating..." : "Create Task"}
-      </button>
+      <Button type="submit" variant="primary" size="md" disabled={pending} className="w-fit px-6">
+        {pending ? "Creating…" : "Create task"}
+      </Button>
     </form>
   );
 }

@@ -17,8 +17,8 @@ export default async function AdminPage() {
   return (
     <>
       <AppHeader session={session} />
-      <main className="flex-1 px-4 sm:px-6 py-6 max-w-3xl w-full mx-auto">
-        <h1 className="axiBold text-lg text-neutral-900 mb-5">Settings</h1>
+      <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-6 sm:px-6">
+        <h1 className="mb-5 text-lg font-bold text-fg">Settings</h1>
         <AdminPanel users={users} appAreas={appAreas} />
       </main>
     </>

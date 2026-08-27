@@ -1,4 +1,3 @@
-import Image from "next/image";
 import Link from "next/link";
 import { logoutAction } from "@/app/actions";
 import { Button } from "@/components/ui/Button";
@@ -22,8 +21,11 @@ export default function AppHeader({ session }: { session: SessionPayload }) {
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 py-2.5 sm:px-6">
         <div className="flex items-center gap-4">
           <Link href="/" className="flex items-center gap-2" aria-label="Bubld Tasks home">
-            <Image src="/media/logo.svg" alt="Bubld" width={78} height={22} priority />
-            <span className="hidden text-sm font-bold text-fg-subtle sm:inline">Tasks</span>
+            {/* eslint-disable-next-line @next/next/no-img-element -- tiny static SVG, next/image adds nothing */}
+            <img src="/media/logo.svg" alt="Bubld" className="h-[18px] w-auto" />
+            <span className="hidden border-l border-border pl-2 text-sm font-medium text-fg-subtle sm:inline">
+              Tasks
+            </span>
           </Link>
           <nav className="flex items-center gap-0.5">
             <NavLink href="/" label="Board" />

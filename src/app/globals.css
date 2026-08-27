@@ -107,15 +107,6 @@
   font-weight: 700;
   font-display: swap;
 }
-/* Back-compat aliases for screens not yet rebuilt -- now just weights on
-   the one Axiforma family, removed in the final cleanup pass. */
-.axiMed {
-  font-weight: 500;
-}
-.axiBold {
-  font-weight: 700;
-}
-
 * {
   border-color: var(--border);
 }

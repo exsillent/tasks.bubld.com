@@ -75,7 +75,7 @@ function groupByDay(entries: FeedEntry[]): { label: string; entries: FeedEntry[]
 
 export default function ActivityFeed({ entries }: { entries: FeedEntry[] }) {
   if (entries.length === 0) {
-    return <p className="text-sm text-neutral-400">Nothing here yet.</p>;
+    return <p className="text-sm text-fg-subtle">Nothing here yet.</p>;
   }
 
   const groups = groupByDay(entries);
@@ -84,24 +84,24 @@ export default function ActivityFeed({ entries }: { entries: FeedEntry[] }) {
     <div className="flex flex-col gap-6">
       {groups.map((group) => (
         <div key={group.label}>
-          <h2 className="text-sm axiMed text-neutral-500 mb-1.5">{group.label}</h2>
-          <ul className="flex flex-col divide-y divide-neutral-100">
+          <h2 className="mb-1.5 text-sm font-medium text-fg-subtle">{group.label}</h2>
+          <ul className="flex flex-col divide-y divide-border">
             {group.entries.map((entry) => (
-              <li key={entry.id} className="py-2.5 flex items-baseline gap-2 text-sm">
-                <span className="text-neutral-400 tabular-nums w-24 shrink-0">
+              <li key={entry.id} className="flex items-baseline gap-2 py-2.5 text-sm">
+                <span className="w-24 shrink-0 tabular-nums text-fg-subtle">
                   {new Date(entry.createdAt).toLocaleTimeString("en-US", {
                     timeZone: EASTERN_TZ,
                     hour: "numeric",
                     minute: "2-digit",
                   })}
                 </span>
-                <span className="axiMed text-neutral-800">{entry.actor.name}</span>
+                <span className="font-medium text-fg">{entry.actor.name}</span>
                 {entry.taskId && entry.action !== "deleted" ? (
-                  <Link href={`/tasks/${entry.taskId}`} className="text-neutral-600 hover:underline">
+                  <Link href={`/tasks/${entry.taskId}`} className="text-fg-muted hover:underline">
                     {describeActivity(entry)}
                   </Link>
                 ) : (
-                  <span className="text-neutral-600">{describeActivity(entry)}</span>
+                  <span className="text-fg-muted">{describeActivity(entry)}</span>
                 )}
               </li>
             ))}

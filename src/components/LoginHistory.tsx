@@ -12,21 +12,21 @@ export default function LoginHistory({ entries }: { entries: LoginEntry[] }) {
 
   return (
     <div className="mt-10">
-      <h2 className="axiBold text-lg text-neutral-900 mb-3">Recent logins</h2>
-      <div className="rounded-xl border border-neutral-200 overflow-hidden">
+      <h2 className="mb-3 text-base font-bold text-fg">Recent logins</h2>
+      <div className="overflow-hidden rounded-[var(--radius)] border border-border">
         <table className="w-full text-sm">
-          <thead className="bg-neutral-50 text-neutral-500 text-xs uppercase tracking-wide">
+          <thead className="bg-surface-2 text-xs uppercase tracking-wide text-fg-subtle">
             <tr>
-              <th className="text-left font-medium px-4 py-2">Who</th>
-              <th className="text-left font-medium px-4 py-2">When</th>
-              <th className="text-left font-medium px-4 py-2">IP address</th>
+              <th className="px-4 py-2 text-left font-medium">Who</th>
+              <th className="px-4 py-2 text-left font-medium">When</th>
+              <th className="px-4 py-2 text-left font-medium">IP address</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-neutral-100">
+          <tbody className="divide-y divide-border">
             {entries.map((entry) => (
               <tr key={entry.id}>
-                <td className="px-4 py-2 axiMed text-neutral-800">{entry.user?.name ?? entry.email}</td>
-                <td className="px-4 py-2 text-neutral-600 tabular-nums">
+                <td className="px-4 py-2 font-medium text-fg">{entry.user?.name ?? entry.email}</td>
+                <td className="px-4 py-2 tabular-nums text-fg-muted">
                   {new Date(entry.createdAt).toLocaleString("en-US", {
                     timeZone: "America/New_York",
                     month: "short",
@@ -35,7 +35,7 @@ export default function LoginHistory({ entries }: { entries: LoginEntry[] }) {
                     minute: "2-digit",
                   })}
                 </td>
-                <td className="px-4 py-2 text-neutral-500 font-mono">{entry.ipAddress ?? "—"}</td>
+                <td className="px-4 py-2 font-mono text-fg-subtle">{entry.ipAddress ?? "—"}</td>
               </tr>
             ))}
           </tbody>
