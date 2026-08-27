@@ -43,6 +43,24 @@ npm audit signatures
 # ----------------------------
 mkdir -p /home/tasksapp/data
 npx prisma generate
+
+# ----------------------------
+# Snapshot the database before applying migrations. Migrations run on the
+# box against real data and some transform it -- a timestamped copy here
+# is the fast rollback path if one goes wrong. Keeps the 10 most recent.
+# ----------------------------
+DB_FILE="/home/tasksapp/data/tasks.db"
+if [ -f "$DB_FILE" ]; then
+  mkdir -p /home/tasksapp/data/backups
+  BACKUP="/home/tasksapp/data/backups/tasks.db.$(date -u +%Y%m%d%H%M%S)"
+  # Stop the app first so the copy can't catch a half-written page, then
+  # copy, then leave it stopped -- it's restarted after the build below.
+  pm2 stop tasks-bubld-com || true
+  cp "$DB_FILE" "$BACKUP"
+  echo "DB backed up to $BACKUP"
+  ls -1t /home/tasksapp/data/backups/tasks.db.* | tail -n +11 | xargs -r rm --
+fi
+
 npx prisma migrate deploy
 
 # ----------------------------

@@ -53,6 +53,30 @@ enum StageStatus {
   COMPLETE
 }
 
+// The single task pipeline that replaces Stage + StageStatus (2026-08-27).
+// One ordered track; the board's columns map 1:1 onto these values. Any
+// logged-in user can still set it directly -- the guided buttons (Send for
+// review / Approve / Send back / Mark deployed) are conveniences on top,
+// not gates. `stage`/`stageStatus`/`status` are kept on Task for now,
+// populated in parallel by the old UI, and dropped in the final cleanup
+// pass once nothing reads them.
+enum Pipeline {
+  BACKLOG // created, not started
+  IN_PROGRESS // a developer is working on it
+  IN_REVIEW // dev says it's done -- on the tester/approver's plate
+  READY_TO_DEPLOY // approved -- on Yasir's plate to deploy or add to a build
+  DEPLOYED // live in production, or shipped in an app build
+}
+
+// Per app area: how finished work in it reaches production. CONTINUOUS =
+// deployed directly (bubld.com, bublr.bubld.com, Admin Panel,
+// Infrastructure, Tasks Tool). BUILD = batched into a numbered app-store
+// build (Customer App, Technician App).
+enum ReleaseMode {
+  CONTINUOUS
+  BUILD
+}
+
 model User {
   id                        String       @id @default(cuid())
   name                      String
@@ -80,11 +104,15 @@ model User {
 // reference it keep displaying it normally, matching the same
 // disable-don't-delete pattern already used for User.
 model AppArea {
-  id        String   @id @default(cuid())
-  name      String   @unique
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  tasks     Task[]
+  id          String      @id @default(cuid())
+  name        String      @unique
+  isActive    Boolean     @default(true)
+  // How work in this area ships -- drives which action the "Ready to
+  // deploy" step offers (mark deployed vs. add to next build). Admin-set
+  // in Settings.
+  releaseMode ReleaseMode @default(CONTINUOUS)
+  createdAt   DateTime    @default(now())
+  tasks       Task[]
 }
 
 // A shippable batch of tasks. Exactly one Build should ever have
@@ -110,14 +138,25 @@ model Task {
   dueDate           DateTime?
   priority          Priority
   type              TaskType
-  // Legacy field, no longer written -- see stage/stageStatus below.
+  // --- Legacy status model. Still written by the current UI and read by
+  // it until the new board replaces those screens; dropped in the final
+  // cleanup pass. New code reads `pipeline`/`archived` below instead. ---
   status            Status       @default(OPEN)
   stage             Stage        @default(DEVELOPMENT)
   stageStatus       StageStatus  @default(OPEN)
-  // Manual action (setClosed), not automatic on reaching Production/Complete
-  // -- available from any stage/status at any time.
   closed            Boolean      @default(false)
   closedAt          DateTime?
+
+  // --- Single-pipeline model (2026-08-27). Populated from stage +
+  // stageStatus by migration 20260827_add_task_pipeline. ---
+  pipeline          Pipeline     @default(BACKLOG)
+  // Replaces `closed` -- a task everyone has seen shipped, off the board
+  // but still searchable. Independent of pipeline position.
+  archived          Boolean      @default(false)
+  archivedAt        DateTime?
+  // Set when a reviewer sends a task back for changes; cleared when it is
+  // sent for review again.
+  changesRequested  Boolean      @default(false)
   build             Build?       @relation(fields: [buildId], references: [id])
   buildId           String?
   foundInProduction Boolean      @default(false)
@@ -158,6 +197,8 @@ model Task {
   @@index([stage])
   @@index([stageStatus])
   @@index([closed])
+  @@index([pipeline])
+  @@index([archived])
   @@index([assigneeId])
   @@index([createdById])
   @@index([appAreaId])
