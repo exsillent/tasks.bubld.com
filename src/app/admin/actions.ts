@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 import { prisma } from "@/lib/db";
 import { requireRole } from "@/lib/auth";
 import { hashPassword } from "@/lib/passwords";
-import type { Role } from "@prisma/client";
+import type { Role, ReleaseMode } from "@prisma/client";
 
 // ---------------------------------------------------------------------------
 // Users -- ADMIN only (in practice, Yasir only)
@@ -101,4 +101,19 @@ export async function setAppAreaActive(appAreaId: string, isActive: boolean): Pr
   await requireRole("ADMIN");
   await prisma.appArea.update({ where: { id: appAreaId }, data: { isActive } });
   revalidatePath("/admin");
+}
+
+/**
+ * How this area's finished work reaches production -- CONTINUOUS (deploy
+ * directly) or BUILD (batch into a numbered app-store build). Drives which
+ * action the "To deploy" column offers.
+ */
+export async function setAppAreaReleaseMode(
+  appAreaId: string,
+  releaseMode: ReleaseMode,
+): Promise<void> {
+  await requireRole("ADMIN");
+  await prisma.appArea.update({ where: { id: appAreaId }, data: { releaseMode } });
+  revalidatePath("/admin");
+  revalidatePath("/");
 }

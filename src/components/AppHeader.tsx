@@ -27,6 +27,7 @@ export default function AppHeader({ session }: { session: SessionPayload }) {
           </Link>
           <nav className="flex items-center gap-0.5">
             <NavLink href="/" label="Board" />
+            <NavLink href="/builds" label="Builds" />
             <NavLink href="/activity" label="Updates" />
             {session.role === "ADMIN" && <NavLink href="/admin" label="Settings" />}
           </nav>

@@ -111,3 +111,34 @@ export async function listActiveAppAreas() {
 export async function listAllAppAreas() {
   return prisma.appArea.findMany({ orderBy: { name: "asc" } });
 }
+
+/**
+ * Builds for the /builds screen: the one open build first (if any), then
+ * shipped ones newest first. Draft tasks are never counted here.
+ */
+export async function listBuilds(session: SessionPayload) {
+  const builds = await prisma.build.findMany({
+    orderBy: [{ shippedAt: "asc" }, { number: "desc" }],
+    include: {
+      tasks: {
+        where: { isDraft: false },
+        select: {
+          id: true,
+          number: true,
+          title: true,
+          pipeline: true,
+          appArea: { select: { name: true } },
+          assignee: { select: { name: true } },
+        },
+        orderBy: { number: "asc" },
+      },
+    },
+  });
+  // open build (shippedAt null) sorts first because null < any date in
+  // SQLite's ASC ordering; everything after is shipped, newest first.
+  const open = builds.find((b) => b.shippedAt === null) ?? null;
+  const shipped = builds
+    .filter((b) => b.shippedAt !== null)
+    .sort((a, b) => b.number - a.number);
+  return { open, shipped, isAdmin: session.role === "ADMIN" };
+}
