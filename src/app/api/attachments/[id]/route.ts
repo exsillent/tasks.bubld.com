@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getSession } from "@/lib/auth";
+import { seesOnlyOwnTasks } from "@/lib/tasks";
 import { createViewUrl } from "@/lib/storage";
 
 /**
@@ -24,11 +25,11 @@ export async function GET(
   const attachment = await prisma.attachment.findUnique({
     where: { id },
     include: {
-      task: { select: { id: true, isDraft: true, createdById: true } },
+      task: { select: { id: true, isDraft: true, createdById: true, assigneeId: true } },
       comment: {
         select: {
           isPrivate: true,
-          task: { select: { id: true, isDraft: true, createdById: true } },
+          task: { select: { id: true, isDraft: true, createdById: true, assigneeId: true } },
         },
       },
     },
@@ -44,10 +45,15 @@ export async function GET(
   }
 
   const isOwner = owningTask.createdById === session.sub;
+  const isCreatorOrAssignee = isOwner || owningTask.assigneeId === session.sub;
   if (owningTask.isDraft && !isOwner) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
   if (attachment.comment?.isPrivate && session.role !== "ADMIN") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+  // An EXTERNAL user can only pull attachments off tasks in their scope.
+  if (seesOnlyOwnTasks(session.role) && !isCreatorOrAssignee) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 

@@ -10,6 +10,12 @@ enum Role {
   ADMIN
   CONTRACTOR
   APPROVER
+  // Outside contractor (e.g. an SEO consultant). Logs in like anyone
+  // else, but can only ever see tasks they created or are assigned to --
+  // enforced in the query layer (lib/tasks.ts, lib/activity.ts), same
+  // server-side pattern as draft tasks and private comments. New tasks
+  // they file are forced into the "bubld.com" app area.
+  EXTERNAL
 }
 
 enum Priority {

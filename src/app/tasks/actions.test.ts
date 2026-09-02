@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { prisma } from "@/lib/db";
 import { createSession } from "@/lib/auth";
 import { getVisibleTask, listVisibleTasks } from "@/lib/tasks";
+import { getAllActivity } from "@/lib/activity";
 import { resetDb, createTestUser } from "@/test-helpers/db";
 import { __clearTestCookies } from "../../../vitest.setup";
 import {
@@ -25,7 +26,12 @@ import {
   addComment,
 } from "./actions";
 
-async function loginAs(user: { id: string; name: string; email: string; role: "ADMIN" | "CONTRACTOR" | "APPROVER" }) {
+async function loginAs(user: {
+  id: string;
+  name: string;
+  email: string;
+  role: "ADMIN" | "CONTRACTOR" | "APPROVER" | "EXTERNAL";
+}) {
   __clearTestCookies();
   await createSession({ sub: user.id, name: user.name, email: user.email, role: user.role });
 }
@@ -49,6 +55,7 @@ describe("task Server Actions", () => {
   let approver: Awaited<ReturnType<typeof createTestUser>>;
   let contractor: Awaited<ReturnType<typeof createTestUser>>;
   let otherApprover: Awaited<ReturnType<typeof createTestUser>>;
+  let external: Awaited<ReturnType<typeof createTestUser>>;
 
   beforeEach(async () => {
     await resetDb();
@@ -56,6 +63,7 @@ describe("task Server Actions", () => {
     approver = await createTestUser({ name: "Roland", role: "APPROVER" });
     otherApprover = await createTestUser({ name: "Danielle", role: "APPROVER" });
     contractor = await createTestUser({ name: "Techaliance", role: "CONTRACTOR" });
+    external = await createTestUser({ name: "Homi", role: "EXTERNAL" });
   });
 
   // -------------------------------------------------------------------------
@@ -171,6 +179,123 @@ describe("task Server Actions", () => {
 
       await loginAs(secondAdmin);
       await expect(publishTask(task.id)).rejects.toThrow();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // An EXTERNAL contractor (e.g. an SEO consultant): can only ever see
+  // tasks they created or are assigned to, and every task they file is
+  // pinned to the bubld.com app area regardless of what the form sent.
+  describe("EXTERNAL contractor visibility", () => {
+    const asExternal = () => ({
+      sub: external.id,
+      name: external.name,
+      email: external.email,
+      role: "EXTERNAL" as const,
+    });
+
+    it("listVisibleTasks returns only tasks they created or are assigned to", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Admin's own" })).catch(() => {});
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Assigned to Homi" })).catch(() => {});
+      const assigned = await prisma.task.findFirstOrThrow({ where: { title: "Assigned to Homi" } });
+      await assignTask(assigned.id, external.id);
+
+      await loginAs(external);
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Homi's own" })).catch(() => {});
+
+      const list = await listVisibleTasks(asExternal());
+      expect(list.map((t) => t.title).sort()).toEqual(["Assigned to Homi", "Homi's own"]);
+    });
+
+    it("getVisibleTask returns null for a task they neither created nor are assigned to", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      expect(await getVisibleTask(task.id, asExternal())).toBeNull();
+    });
+
+    it("getVisibleTask returns a task assigned to them even if someone else created it", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+      await assignTask(task.id, external.id);
+      expect(await getVisibleTask(task.id, asExternal())).not.toBeNull();
+    });
+
+    it("blocks Server Actions on a task outside their scope", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await loginAs(external);
+      await expect(setPipeline(task.id, "DEPLOYED")).rejects.toThrow("Task not found");
+      await expect(addComment(task.id, taskForm({ body: "hi" }))).rejects.toThrow("Task not found");
+    });
+
+    it("can create, view, edit and comment on their own task", async () => {
+      await loginAs(external);
+      await createTask(
+        null,
+        taskForm({ ...BASE_TASK_FIELDS, title: "SEO: add meta descriptions" }),
+      ).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      expect(await getVisibleTask(task.id, asExternal())).not.toBeNull();
+
+      await updateTaskFields(
+        task.id,
+        taskForm({ ...BASE_TASK_FIELDS, title: "SEO: meta + canonical tags" }),
+      );
+      expect((await prisma.task.findUniqueOrThrow({ where: { id: task.id } })).title).toBe(
+        "SEO: meta + canonical tags",
+      );
+
+      await addComment(task.id, taskForm({ body: "Starting with the top 10 landing pages." }));
+      expect(await prisma.comment.count({ where: { taskId: task.id } })).toBeGreaterThan(0);
+    });
+
+    it("pins every task they create to the bubld.com area, ignoring the submitted area", async () => {
+      await loginAs(external);
+      // BASE_TASK_FIELDS submits appAreaId "customer_app" -- must be overridden.
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow({ include: { appArea: true } });
+      expect(task.appArea.name).toBe("bubld.com");
+    });
+
+    it("won't let them move their own task out of the bubld.com area", async () => {
+      await loginAs(external);
+      await createTask(null, taskForm(BASE_TASK_FIELDS)).catch(() => {});
+      const task = await prisma.task.findFirstOrThrow();
+
+      await updateTaskFields(
+        task.id,
+        taskForm({ ...BASE_TASK_FIELDS, appAreaId: "infrastructure", title: "still bubld.com" }),
+      );
+      const updated = await prisma.task.findUniqueOrThrow({
+        where: { id: task.id },
+        include: { appArea: true },
+      });
+      expect(updated.appArea.name).toBe("bubld.com");
+    });
+
+    it("archiveAllDeployed is ADMIN-only (not EXTERNAL, not a Developer)", async () => {
+      await loginAs(external);
+      await expect(archiveAllDeployed()).rejects.toThrow("Not authorized");
+      await loginAs(contractor);
+      await expect(archiveAllDeployed()).rejects.toThrow("Not authorized");
+    });
+
+    it("the activity feed only shows entries for tasks in their scope", async () => {
+      await loginAs(admin);
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Admin only" })).catch(() => {});
+
+      await loginAs(external);
+      await createTask(null, taskForm({ ...BASE_TASK_FIELDS, title: "Homi's task" })).catch(() => {});
+
+      const feed = await getAllActivity(asExternal());
+      expect(feed.length).toBeGreaterThan(0);
+      expect(feed.every((e) => e.taskTitle === "Homi's task")).toBe(true);
     });
   });
 

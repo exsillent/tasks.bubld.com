@@ -1,12 +1,15 @@
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { listBuilds } from "@/lib/tasks";
+import { listBuilds, seesOnlyOwnTasks } from "@/lib/tasks";
 import AppHeader from "@/components/AppHeader";
 import BuildsView from "@/components/BuildsView";
 
 export default async function BuildsPage() {
   const session = await getSession();
   if (!session) redirect("/login");
+  // EXTERNAL contractors have no business here -- 404 on a direct hit,
+  // same server-side pattern as /admin for a non-admin.
+  if (seesOnlyOwnTasks(session.role)) notFound();
 
   const { open, shipped, isAdmin } = await listBuilds(session);
 

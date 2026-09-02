@@ -3,15 +3,28 @@ import { prisma } from "./db";
 import type { SessionPayload } from "./jwt";
 
 /**
- * Draft-visibility filter, shared by every query that lists or fetches
- * tasks: a draft task is invisible to everyone except its creator. This
- * lives in one place so every call site enforces it the same way -- see
- * the plan's security section on this being a server-side data-layer
- * check, not just a UI-hidden row.
+ * An EXTERNAL user (outside contractor, e.g. an SEO consultant) can only
+ * ever see tasks they created or are assigned to. Every other role sees
+ * the whole board. One place so the board query, the single-task fetch,
+ * the activity feed and the attachment route all enforce it identically.
  */
-export function visibleToUserWhere(userId: string) {
+export function seesOnlyOwnTasks(role: SessionPayload["role"]): boolean {
+  return role === "EXTERNAL";
+}
+
+/**
+ * Task-visibility filter, shared by every query that lists or fetches
+ * tasks:
+ *   - a draft task is invisible to everyone except its creator;
+ *   - an EXTERNAL user only sees tasks they created or are assigned to.
+ * This lives in one place so every call site enforces it the same way --
+ * a server-side data-layer check, not just a UI-hidden row.
+ */
+export function visibleToUserWhere(userId: string, role: SessionPayload["role"]) {
+  const draftRule = { OR: [{ isDraft: false }, { createdById: userId }] };
+  if (!seesOnlyOwnTasks(role)) return draftRule;
   return {
-    OR: [{ isDraft: false }, { createdById: userId }],
+    AND: [draftRule, { OR: [{ createdById: userId }, { assigneeId: userId }] }],
   };
 }
 
@@ -38,14 +51,20 @@ function redactAdminOnlyFields<
 
 export async function listVisibleTasks(session: SessionPayload) {
   const tasks = await prisma.task.findMany({
-    where: visibleToUserWhere(session.sub),
+    where: visibleToUserWhere(session.sub, session.role),
     include: TASK_INCLUDE,
     orderBy: { updatedAt: "desc" },
   });
   return tasks.map((t) => redactAdminOnlyFields(t, session.role));
 }
 
-/** Returns null if the task doesn't exist OR the viewer isn't allowed to see it (draft, not theirs). */
+/**
+ * Returns null if the task doesn't exist OR the viewer isn't allowed to
+ * see it -- a draft that isn't theirs, or (for an EXTERNAL user) a task
+ * they neither created nor are assigned to. Every task Server Action
+ * funnels through here first, so this null is also what blocks an
+ * EXTERNAL user from acting on a task outside their scope.
+ */
 export async function getVisibleTask(taskId: string, session: SessionPayload) {
   const task = await prisma.task.findUnique({
     where: { id: taskId },
@@ -69,6 +88,13 @@ export async function getVisibleTask(taskId: string, session: SessionPayload) {
 
   if (!task) return null;
   if (task.isDraft && task.createdById !== session.sub) return null;
+  if (
+    seesOnlyOwnTasks(session.role) &&
+    task.createdById !== session.sub &&
+    task.assigneeId !== session.sub
+  ) {
+    return null;
+  }
   return redactAdminOnlyFields(task, session.role);
 }
 

@@ -25,6 +25,7 @@ const ROLES: { value: Role; label: string }[] = [
   { value: "ADMIN", label: "Admin" },
   { value: "APPROVER", label: "Reviewer" },
   { value: "CONTRACTOR", label: "Developer" },
+  { value: "EXTERNAL", label: "External (own tasks only)" },
 ];
 
 const field =

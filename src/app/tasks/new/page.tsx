@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { listActiveUsers, listActiveAppAreas } from "@/lib/tasks";
+import { listActiveUsers, listActiveAppAreas, seesOnlyOwnTasks } from "@/lib/tasks";
 import AppHeader from "@/components/AppHeader";
 import NewTaskForm from "./NewTaskForm";
 
@@ -8,7 +8,13 @@ export default async function NewTaskPage() {
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const [users, appAreas] = await Promise.all([listActiveUsers(), listActiveAppAreas()]);
+  const [users, allAppAreas] = await Promise.all([listActiveUsers(), listActiveAppAreas()]);
+  // EXTERNAL contractors only file bubld.com work -- give the form that
+  // one option. The server pins it regardless (see createTask), this just
+  // keeps the UI honest.
+  const appAreas = seesOnlyOwnTasks(session.role)
+    ? allAppAreas.filter((a) => a.name === "bubld.com")
+    : allAppAreas;
 
   return (
     <>

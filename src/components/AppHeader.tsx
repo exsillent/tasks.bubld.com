@@ -16,6 +16,9 @@ function NavLink({ href, label }: { href: string; label: string }) {
 }
 
 export default function AppHeader({ session }: { session: SessionPayload }) {
+  // An EXTERNAL contractor only sees their own tasks -- Builds (app-store
+  // release batching) is meaningless to them, so it's dropped from the nav.
+  const isExternal = session.role === "EXTERNAL";
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-bg/85 backdrop-blur">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 py-2.5 sm:px-6">
@@ -29,7 +32,7 @@ export default function AppHeader({ session }: { session: SessionPayload }) {
           </Link>
           <nav className="flex items-center gap-0.5">
             <NavLink href="/" label="Board" />
-            <NavLink href="/builds" label="Builds" />
+            {!isExternal && <NavLink href="/builds" label="Builds" />}
             <NavLink href="/activity" label="Updates" />
             {session.role === "ADMIN" && <NavLink href="/admin" label="Settings" />}
           </nav>

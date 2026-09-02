@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireSession, requireRole } from "@/lib/auth";
-import { getVisibleTask } from "@/lib/tasks";
+import { getVisibleTask, seesOnlyOwnTasks } from "@/lib/tasks";
 import { notifyByEmail } from "@/lib/notify";
 import { createUploadUrl, verifyUploadedObject } from "@/lib/storage";
 import { logActivity } from "@/lib/activity";
@@ -36,6 +36,19 @@ export async function requestUploadUrl(
 ): Promise<{ url: string; key: string }> {
   await requireSession();
   return createUploadUrl("task", contentType);
+}
+
+/**
+ * The app area an EXTERNAL user's tasks always land in -- they only work
+ * on the marketing site, so we ignore whatever appArea their form sent
+ * and pin it to "bubld.com" server-side.
+ */
+async function externalAppAreaId(): Promise<string> {
+  const area = await prisma.appArea.findUnique({ where: { name: "bubld.com" } });
+  if (!area) {
+    throw new Error('The "bubld.com" app area is missing -- ask an admin to add it back.');
+  }
+  return area.id;
 }
 
 async function notifyTaskEvent(
@@ -78,7 +91,10 @@ export async function createTask(
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const appAreaId = String(formData.get("appAreaId") ?? "");
+  // EXTERNAL users don't get to choose -- their work is always bubld.com.
+  const appAreaId = seesOnlyOwnTasks(session.role)
+    ? await externalAppAreaId()
+    : String(formData.get("appAreaId") ?? "");
   const priority = String(formData.get("priority") ?? "") as Priority;
   const type = String(formData.get("type") ?? "") as TaskType;
   const dueDateRaw = String(formData.get("dueDate") ?? "");
@@ -196,7 +212,10 @@ export async function updateTaskFields(taskId: string, formData: FormData): Prom
 
   const title = String(formData.get("title") ?? "").trim();
   const description = String(formData.get("description") ?? "").trim();
-  const appAreaId = String(formData.get("appAreaId") ?? "");
+  // EXTERNAL users can't move a task out of the bubld.com area either.
+  const appAreaId = seesOnlyOwnTasks(session.role)
+    ? await externalAppAreaId()
+    : String(formData.get("appAreaId") ?? "");
   const priority = String(formData.get("priority") ?? "") as Priority;
   const type = String(formData.get("type") ?? "") as TaskType;
   const dueDateRaw = String(formData.get("dueDate") ?? "");
@@ -675,9 +694,13 @@ export async function unarchiveTask(taskId: string): Promise<void> {
   });
 }
 
-/** Bulk-archive every DEPLOYED task -- the "tidy up the board" button. */
+/**
+ * Bulk-archive every DEPLOYED task -- the "tidy up the board" button,
+ * which the board only shows to ADMIN. Gated to match: it sweeps the
+ * whole board, so it's never something a scoped-down role should reach.
+ */
 export async function archiveAllDeployed(): Promise<number> {
-  const session = await requireSession();
+  const session = await requireRole("ADMIN");
   const deployed = await prisma.task.findMany({
     where: { pipeline: "DEPLOYED", archived: false, isDraft: false },
     select: { id: true, number: true, title: true, createdById: true, assigneeId: true },

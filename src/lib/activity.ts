@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "./db";
 import type { SessionPayload } from "./jwt";
 import type { Prisma } from "@prisma/client";
+import { seesOnlyOwnTasks } from "./tasks";
 
 export type ActivityAction =
   | "created"
@@ -107,11 +108,17 @@ export async function markDigestSeen(userId: string): Promise<void> {
  * Full team activity, newest first, for the browsable /activity page.
  * Not date-scoped -- once an entry has shown up here it stays visible,
  * grouped by day in the UI rather than hidden behind a day picker.
+ *
+ * An EXTERNAL user only ever sees activity on tasks they created or are
+ * assigned to -- same rule the board and the digest already apply.
  */
 export async function getAllActivity(session: SessionPayload) {
   return prisma.activityLog.findMany({
     where: {
       ...(session.role === "ADMIN" ? {} : { isPrivate: false }),
+      ...(seesOnlyOwnTasks(session.role)
+        ? { OR: [{ taskCreatedById: session.sub }, { taskAssigneeId: session.sub }] }
+        : {}),
     },
     include: DIGEST_INCLUDE,
     orderBy: { createdAt: "desc" },

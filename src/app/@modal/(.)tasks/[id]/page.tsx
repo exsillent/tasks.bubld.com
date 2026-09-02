@@ -1,6 +1,6 @@
 import { redirect, notFound } from "next/navigation";
 import { getSession } from "@/lib/auth";
-import { getVisibleTask, listActiveUsers, listAllAppAreas } from "@/lib/tasks";
+import { getVisibleTask, listActiveUsers, listAllAppAreas, seesOnlyOwnTasks } from "@/lib/tasks";
 import TaskModal from "@/components/TaskModal";
 import TaskDetail from "@/app/tasks/[id]/TaskDetail";
 
@@ -29,13 +29,18 @@ export default async function InterceptedTaskDetailPage({
   const session = await getSession();
   if (!session) redirect("/login");
 
-  const [task, users, appAreas] = await Promise.all([
+  const [task, users, allAppAreas] = await Promise.all([
     getVisibleTask(id, session),
     listActiveUsers(),
     listAllAppAreas(),
   ]);
 
   if (!task) notFound();
+
+  // EXTERNAL contractors' tasks are always bubld.com (see createTask).
+  const appAreas = seesOnlyOwnTasks(session.role)
+    ? allAppAreas.filter((a) => a.name === "bubld.com")
+    : allAppAreas;
 
   return (
     <TaskModal>
