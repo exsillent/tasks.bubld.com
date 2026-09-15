@@ -90,6 +90,7 @@ jobs:
             --deployment-group-name tasks-bubld-com-deployment \
             --s3-location bucket=bubld-tasks-deploy-artifacts,key=${{ steps.upload.outputs.key }},bundleType=zip \
             --description "GitHub Actions: ${{ github.sha }}" \
+            --file-exists-behavior OVERWRITE \
             --query "deploymentId" --output text)
           echo "id=${DEPLOYMENT_ID}" >> "$GITHUB_OUTPUT"
           echo "Deployment: ${DEPLOYMENT_ID}"
